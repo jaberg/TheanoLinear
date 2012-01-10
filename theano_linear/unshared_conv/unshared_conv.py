@@ -1,5 +1,6 @@
 import numpy
 import theano
+import StringIO
 
 from ..linear import LinearTransform
 
@@ -95,6 +96,12 @@ class FilterActs(theano.Op):
     def __hash__(self):
         return hash((type(self), self._attributes()))
 
+    def __str__(self):
+        return '%s{module_stride=%i}' % (
+                self.__class__.__name__,
+                self.module_stride,
+                )
+
     def make_node(self, images, filters):
         return theano.gof.Apply(self,
                 [images, filters],
@@ -103,51 +110,186 @@ class FilterActs(theano.Op):
     def perform(self, node, iargs, ostor):
         images, filters = iargs
 
-        icolors, iheight, iwidth, icount = images.shape
-        fgroups_h, fgroups_w, fcolors, fheight, fwidth, fcount = filters.shape
-        # groups are "modules" in Alex's code
+        igroups, icolors_per_group, irows, icols, icount = images.shape
+        fmodulesR, fmodulesC, fcolors, frows, fcols = filters.shape[:-2]
+        fgroups, filters_per_group = filters.shape[-2:]
 
-        if iheight != iwidth:
-            raise ValueError("non-square image argument",
-                    (iheight, iwidth))
-        if fheight != fwidth:
-            raise ValueError("non-square filter shape",
-                    (fheight, fwidth))
-        if fgroups_h != fgroups_w:
-            raise ValueError('non-square filter grouping',
-                    (fgroups_h, fgroups_w))
-        if icolors != fcolors:
+        if irows != icols:
+            raise NotImplementedError("non-square image argument",
+                    (irows, icols))
+        if frows != fcols:
+            raise NotImplementedError("non-square filter shape",
+                    (frows, fcols))
+        if fmodulesR != fmodulesC:
+            raise NotImplementedError('non-square filter grouping',
+                    (fmodulesR, fmodulesC))
+        if icolors_per_group != fcolors:
             raise ValueError("color counts don't match",
-                    (icolors, fcolors))
+                    (icolors_per_group, fcolors))
 
-        target = numpy.zeros((fcount, fgroups_h, fgroups_w, icount),
+        target = numpy.zeros(
+                (fgroups, filters_per_group, fmodulesR, fmodulesC, icount),
                 dtype=images.dtype)
 
-        for filter_idx in xrange(fcount):
-            for ogroup_h_idx in xrange(fgroups_h):
-                for ogroup_w_idx in xrange(fgroups_w):
-                    img_h_offset = ogroup_h_idx * self.module_stride
-                    img_w_offset = ogroup_w_idx * self.module_stride
-                    ipatches = images[:,
-                            img_h_offset:img_h_offset + fheight,
-                            img_w_offset:img_w_offset + fwidth,
-                            :].reshape(-1, icount)
-                    fpatch = filters[ogroup_h_idx,
-                            ogroup_w_idx,
-                            :,
-                            :,
-                            :,
-                            filter_idx].flatten()
-                    target[filter_idx,
-                            ogroup_h_idx,
-                            ogroup_w_idx,
-                            :] = (ipatches.T * fpatch).sum(axis=1)
+        for mR in xrange(fmodulesR):
+            for mC in xrange(fmodulesC):
+                for gg in xrange(igroups):
+                    img_r_offset = mR * self.module_stride
+                    img_c_offset = mC * self.module_stride
+                    rc_images = images[gg, :,
+                            img_r_offset:img_r_offset + frows,
+                            img_c_offset:img_c_offset + fcols,
+                            :]
+                    rc_filters = filters[mR, mC, :, :, :, gg, :]
+                    # rc_images are fcolors x frows x fcols x count
+                    # rc_filters are fcolors x frows x fcols x fpg
+                    rc_target = numpy.dot(
+                        rc_filters.reshape(-1, filters_per_group).T,
+                        rc_images.reshape(-1, icount))
+                    target[gg, :, mR, mC, :] = rc_target
         ostor[0][0] = target
 
 
-    def unready_c_code(self, node, nodename, inames, onames, sub):
-        images, filters = inames
-        targets, = onames
+class GpuFilterActs(FilterActs):
+    """
+
+    """
+    def c_support_code(self):
+        cufile = open('filter_acts.cu')
+        return cufile.read()
+
+    def c_code_cache_version(self):
+        return ()
+
+    def c_code(self, node, name, inputs, outputs, sub):
+        #z_out = alpha * dot(x,y) + beta * z_in
+        #inplace version, set set z_out = z_in
+        #not inplace version, we copy z_in to z_out.
+        images, filters, = inputs
+        responses, = outputs
         fail = sub['fail']
-        return """
-        """ % locals()
+        moduleStride = str(self.module_stride)
+        sio = StringIO.StringIO()
+
+        print >> sio, """
+
+        //XXX: actually the rightmost images dimension can be strided
+        if (!CudaNdarray_is_c_contiguous(%(images)s))
+        {
+            PyErr_Format(PyExc_NotImplementedError,
+                "images not c contiguous");
+            %(fail)s;
+        }
+
+        if (!CudaNdarray_is_c_contiguous(%(filters)s))
+        {
+            PyErr_Format(PyExc_NotImplementedError,
+                "filters not c contiguous");
+            %(fail)s;
+        }
+
+        if (%(images)s->nd != 5)
+        {
+            PyErr_Format(PyExc_TypeError,
+                "images ndim (%%i) must be 5",
+                %(images)s->nd);
+            %(fail)s;
+        }
+
+        if (%(filters)s->nd != 7)
+        {
+            PyErr_Format(PyExc_TypeError,
+                "images ndim (%%i) must be 5",
+                %(images)s->nd);
+            %(fail)s;
+        }
+
+        { // new scope, new vars
+
+            int igroups           = CudaNdarray_HOST_DIMS(%(images)s)[0];
+            int icolors_per_group = CudaNdarray_HOST_DIMS(%(images)s)[1];
+            int irows             = CudaNdarray_HOST_DIMS(%(images)s)[2];
+            int icols             = CudaNdarray_HOST_DIMS(%(images)s)[3];
+            int icount            = CudaNdarray_HOST_DIMS(%(images)s)[4];
+
+            int fmodulesR         = CudaNdarray_HOST_DIMS(%(filters)s)[0];
+            int fmodulesC         = CudaNdarray_HOST_DIMS(%(filters)s)[1];
+            int fcolors           = CudaNdarray_HOST_DIMS(%(filters)s)[2];
+            int frows             = CudaNdarray_HOST_DIMS(%(filters)s)[3];
+            int fcols             = CudaNdarray_HOST_DIMS(%(filters)s)[4];
+            int fgroups           = CudaNdarray_HOST_DIMS(%(filters)s)[5];
+            int filters_per_group = CudaNdarray_HOST_DIMS(%(filters)s)[6];
+
+            // XXX: use this parameter properly
+            int paddingStart = 0;
+            int imgStride = icount;
+            float scaleTargets = 0.0;
+            float scaleOutput = 1.0;
+            bool conv = false;
+
+            if (igroups != fgroups)
+            {
+                PyErr_Format(PyExc_ValueError,
+                    "igroups != fgroups (%%i != %%i)",
+                    igroups, fgroups);
+                %(fail)s;
+            }
+
+            if (icolors_per_group != fcolors)
+            {
+                PyErr_Format(PyExc_ValueError,
+                    "icolors_per_group != fcolors (%%i != %%i)",
+                    icolors_per_group,
+                    fcolors);
+                %(fail)s;
+            }
+
+            if (!%(responses)s)
+            {
+                Py_XDECREF(%(responses)s);
+                int dims[5];
+                dims[0] = fgroups;
+                dims[1] = filters_per_group;
+                dims[2] = fmodulesR;
+                dims[3] = fmodulesC;
+                dims[4] = icount;
+                %(responses)s = (CudaNdarray*)CudaNdarray_NewDims(5, dims);
+                if (!%(responses)s)
+                {
+                    %(fail)s;
+                }
+            }
+
+            assert(CudaNdarray_is_c_contiguous(%(responses)s));
+
+            if (_filterActs(
+                    igroups,
+                    icolors_per_group,
+                    irows,
+                    icols,
+                    icount,
+                    fmodulesR,
+                    fmodulesC,
+                    frows,
+                    fcols,
+                    filters_per_group,
+                    CudaNdarray_DEV_DATA(%(images)s),
+                    CudaNdarray_DEV_DATA(%(filters)s),
+                    CudaNdarray_DEV_DATA(%(responses)s),
+                    paddingStart,
+                    %(moduleStride)s,
+                    imgStride,
+                    scaleTargets,
+                    scaleOutput,
+                    conv))
+            {
+                %(fail)s;
+            }
+        } // end bogus scope used for vars
+
+        """
+
+        return sio.getvalue() % locals()
+
+    def perform(self, *args, **kwargs):
+        return theano.Op.perform(self, *args, **kwargs)
