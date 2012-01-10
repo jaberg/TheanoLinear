@@ -1,4 +1,5 @@
 """
+XXX
 """
 from PIL import Image
 import sys
@@ -12,6 +13,8 @@ import pylearn.io.image_tiling
 prod = numpy.prod
 
 _ndarray_status_fmt='%(msg)s shape=%(shape)s min=%(min)f max=%(max)f'
+
+
 def ndarray_status(x, fmt=_ndarray_status_fmt, msg="", **kwargs):
     kwargs.update(dict(
             msg=msg,
@@ -21,6 +24,7 @@ def ndarray_status(x, fmt=_ndarray_status_fmt, msg="", **kwargs):
             var = x.var(),
             shape=x.shape))
     return fmt%kwargs
+
 
 class LinearTransform(object):
     def __init__(self, params):
@@ -82,6 +86,7 @@ class LinearTransform(object):
     def _tile_columns(self):
         raise NotImplementedError('override me')
 
+
 class TransposeTransform(LinearTransform):
     def __init__(self, base):
         super(TransposeTransform, self).__init__([])
@@ -102,6 +107,7 @@ class TransposeTransform(LinearTransform):
         # yes, it would be nice to do rows, but since this is a visualization
         # and there *is* no tile_rows, we fall back on this.
         return self.base._tile_columns()
+
 
 class LConcat(LinearTransform):
     """
@@ -187,6 +193,8 @@ class LConcat(LinearTransform):
     def print_status(self):
         for W in self._Wlist:
             W.print_status()
+
+
 class LSum(LinearTransform):
     def __init__(self, terms):
         self.terms = terms
@@ -210,6 +218,7 @@ class LSum(LinearTransform):
             t.print_status()
     def _tile_columns(self):
         raise NotImplementedError('TODO')
+
 
 class MatrixMul(LinearTransform):
     # Works for Sparse and TensorType matrices
@@ -265,6 +274,7 @@ class MatrixMul(LinearTransform):
                 scale_each=scale_each,
                 **kwargs)
 
+
 def tile_conv_weights(w,flip=False, scale_each=False):
     """
     Return something that can be rendered as an image to visualize the filters.
@@ -297,7 +307,12 @@ def tile_conv_weights(w,flip=False, scale_each=False):
                     tc*(1+w.shape[3]):tc*(1+w.shape[3])+w.shape[3]] = tmp
     return out
 
+
 class LConv(LinearTransform):
+    """
+    XXX
+    """
+
     def __init__(self, filters, img_shape, subsample=(1,1), border_mode='valid',
             filters_shape=None, message=""):
         super(LConv, self).__init__([filters])
@@ -317,6 +332,7 @@ class LConv(LinearTransform):
             raise TypeError('need 4-tuple shape', self._img_shape)
         if not len(self._filters_shape)==4:
             raise TypeError('need 4-tuple shape', self._filters_shape)
+
     def _lmul(self, x, T):
         if T:
             dummy_v = tensor.tensor4()
@@ -336,8 +352,10 @@ class LConv(LinearTransform):
                     subsample=self._subsample,
                     border_mode=self._border_mode,
                     )
+
     def _row_shape(self):
         return self._img_shape[1:]
+
     def _col_shape(self):
         rows_cols = ConvOp.getOutputShape(
                 self._img_shape[2:],
@@ -346,11 +364,13 @@ class LConv(LinearTransform):
                 self._border_mode)
         rval = (self._filters_shape[0],)+tuple(rows_cols)
         return rval
+
     def _tile_columns(self, scale_each=True, **kwargs):
         return pylearn.io.image_tiling.tile_slices_to_image(
                 self._filters.get_value()[:,:,::-1,::-1].transpose(0,2,3,1),
                 scale_each=scale_each,
                 **kwargs)
+
     def print_status(self):
         print ndarray_status(
                 self._filters.get_value(borrow=True),
