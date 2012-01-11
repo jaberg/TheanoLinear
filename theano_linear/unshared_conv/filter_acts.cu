@@ -372,26 +372,26 @@ __global__ void filterActs_YxX_sparse(float* images, float* filters, float* targ
  *
  * targets:     (numFilters, numModules, numImages)
  */
- int _filterActs(
-         int numGroups,
-         int numImgColorsPerGroup,
-         int numImgRows,
-         int numImgCols,
-         int numImages,
-         int numModulesX,
-         int numModulesY,
-         int numFilterRows,
-         int numFilterCols,
-         int numFiltersPerGroup,
-         float * imageptr,
-         float * filterptr,
-         float * targetptr,
-         int paddingStart,
-         int moduleStride,
-         int imgStride,      // step from start of img 0 to start of img 1
-         float scaleTargets,
-         float scaleOutput,
-         bool conv) {
+int _filterActs(
+        int numGroups,
+        int numImgColorsPerGroup,
+        int numImgRows,
+        int numImgCols,
+        int numImages,
+        int numModulesX,
+        int numModulesY,
+        int numFilterRows,
+        int numFilterCols,
+        int numFiltersPerGroup,
+        float * imageptr,
+        float * filterptr,
+        float * targetptr,
+        int paddingStart,
+        int moduleStride,
+        int imgStride,      // step from start of img 0 to start of img 1
+        float scaleTargets,
+        float scaleOutput,
+        bool conv) {
     int numImgColors = numGroups * numImgColorsPerGroup;
     int numFilterColors = numImgColorsPerGroup;
     int numModules = numModulesX * numModulesY;
