@@ -1,76 +1,34 @@
+"""
+XXX
+"""
+
 import numpy
 import theano
 import StringIO
 
-from ..linear import LinearTransform
+class Base(theano.Op):
+    def __init__(self,
+            module_stride=1,
+            ):
+        self.module_stride = module_stride
 
+    def _attributes(self):
+        return (
+                self.module_stride,
+                )
 
-class ImageLocalDot(LinearTransform):
-    """
-    ImageLocalDot is an linear operation computationlly similar to
-    convolution in the spatial domain, except that whereas convolution
-    applying a single filter or set of filters across an image, the
-    ImageLocalDot has different filterbanks for different points in the image.
+    def __eq__(self, other):
+        return (type(self) == type(other)
+                and self._attributes() == other._attributes())
 
-    Mathematically, this is a general linear transform except for a
-    restriction that filters are 0 outside of a spatially localized patch
-    within the image.
+    def __hash__(self):
+        return hash((type(self), self._attributes()))
 
-    """
-
-    def __init__(self, filters, img_shape,
-            subsample=(1, 1),
-            border_mode='valid',
-            filters_shape=None,
-            message=""):
-        super(LConv, self).__init__([filters])
-        self._filters = filters
-        if filters_shape is None:
-            self._filters_shape = tuple(filters.get_value().shape)
-        else:
-            self._filters_shape = tuple(filters_shape)
-        self._img_shape = tuple(img_shape)
-        self._subsample = tuple(subsample)
-        self._border_mode = border_mode
-        if message:
-            self._message = message
-        else:
-            self._message = filters.name
-        if not len(self._img_shape)==4:
-            raise TypeError('need 4-tuple shape', self._img_shape)
-        if not len(self._filters_shape)==4:
-            raise TypeError('need 4-tuple shape', self._filters_shape)
-
-    def _lmul(self, x, T):
-        if T:
-            # left-multiply transpose of self with x
-            raise NotImplementedError()
-        else:
-            # left-multiply self with x
-            raise NotImplementedError()
-
-    def _row_shape(self):
-        return self._img_shape[1:]
-
-    def _col_shape(self):
-        rows_cols = ConvOp.getOutputShape(
-                self._img_shape[2:],
-                self._filters_shape[2:],
-                self._subsample,
-                self._border_mode)
-        rval = (self._filters_shape[0],)+tuple(rows_cols)
-        return rval
-
-    def _tile_columns(self, scale_each=True, **kwargs):
-        return pylearn.io.image_tiling.tile_slices_to_image(
-                self._filters.get_value()[:,:,::-1,::-1].transpose(0,2,3,1),
-                scale_each=scale_each,
-                **kwargs)
-
-    def print_status(self):
-        print ndarray_status(
-                self._filters.get_value(borrow=True),
-                msg='LConv{%s}'%self._message)
+    def __str__(self):
+        return '%s{module_stride=%i}' % (
+                self.__class__.__name__,
+                self.module_stride,
+                )
 
 
 class FilterActs(theano.Op):
@@ -149,147 +107,210 @@ class FilterActs(theano.Op):
                     target[gg, :, mR, mC, :] = rc_target
         ostor[0][0] = target
 
+    def grad(self, inputs, goutputs):
+        images, filters = inputs
+        frows = filters.shape[3]
+        fcols = filters.shape[4]
+        gimages = ImgActs(module_stride=self.module_stride)(
+                filters, goutputs[0])
+        gfilters = WeightActs(
+                module_stride=self.module_stride,
+                partial_sum=1)(images, goutputs[0], frows, fcols)
+        return [gimages, gfilters]
 
-class GpuFilterActs(FilterActs):
+
+class WeightActs(theano.Op):
     """
-
+    Images of shape: colors x
+    Filters are of shape:
+        channels
     """
-    def c_support_code(self):
-        cufile = open('filter_acts.cu')
-        return cufile.read()
+    def __init__(self,
+            module_stride=1,
+            ):
+        self.module_stride = module_stride
 
-    def c_code_cache_version(self):
-        return ()
+    def _attributes(self):
+        return (
+                self.module_stride,
+                )
 
-    def c_code(self, node, name, inputs, outputs, sub):
-        #z_out = alpha * dot(x,y) + beta * z_in
-        #inplace version, set set z_out = z_in
-        #not inplace version, we copy z_in to z_out.
-        images, filters, = inputs
-        responses, = outputs
-        fail = sub['fail']
-        moduleStride = str(self.module_stride)
-        sio = StringIO.StringIO()
+    def __eq__(self, other):
+        return (type(self) == type(other)
+                and self._attributes() == other._attributes())
 
-        print >> sio, """
+    def __hash__(self):
+        return hash((type(self), self._attributes()))
 
-        //XXX: actually the rightmost images dimension can be strided
-        if (!CudaNdarray_is_c_contiguous(%(images)s))
-        {
-            PyErr_Format(PyExc_NotImplementedError,
-                "images not c contiguous");
-            %(fail)s;
-        }
+    def __str__(self):
+        return '%s{module_stride=%i}' % (
+                self.__class__.__name__,
+                self.module_stride,
+                )
 
-        if (!CudaNdarray_is_c_contiguous(%(filters)s))
-        {
-            PyErr_Format(PyExc_NotImplementedError,
-                "filters not c contiguous");
-            %(fail)s;
-        }
+    def make_node(self, images, hidacts, frows, fcols):
+        images, hidacts, frows, fcols = map(theano.tensor.as_tensor_variable,
+                [images, hidacts, frows, fcols])
+        if frows.dtype[:3] not in ('int', 'uin'):
+            raise TypeError(frows)
+        if fcols.dtype[:3] not in ('int', 'uin'):
+            raise TypeError(frows)
+        if frows.ndim:
+            raise TypeError('frows should be scalar', frows)
+        if fcols.ndim:
+            raise TypeError('fcols should be scalar', fcols)
 
-        if (%(images)s->nd != 5)
-        {
-            PyErr_Format(PyExc_TypeError,
-                "images ndim (%%i) must be 5",
-                %(images)s->nd);
-            %(fail)s;
-        }
+        if images.dtype != hidacts.dtype:
+            raise TypeError('images and hidacts dtype mismatch',
+                    (images.dtype, hidacts.dtype))
 
-        if (%(filters)s->nd != 7)
-        {
-            PyErr_Format(PyExc_TypeError,
-                "images ndim (%%i) must be 5",
-                %(images)s->nd);
-            %(fail)s;
-        }
+        igroups, icolors, irows, icols, icount = images.type.broadcastable
+        hgroups, hcolors, hrows, hcols, hcount = hidacts.type.broadcastable
+        otype = theano.tensor.TensorType(
+                dtype=images.dtype,
+                broadcastable=(hrows, hcols, icolors,
+                    False, False, hgroups, hcolors))
+        return theano.Apply(self,
+                [images, hidacts, frows, fcols],
+                [otype()])
 
-        { // new scope, new vars
+    def perform(self, node, iargs, ostor):
+        images, hidacts, frows, fcols = iargs
 
-            int igroups           = CudaNdarray_HOST_DIMS(%(images)s)[0];
-            int icolors_per_group = CudaNdarray_HOST_DIMS(%(images)s)[1];
-            int irows             = CudaNdarray_HOST_DIMS(%(images)s)[2];
-            int icols             = CudaNdarray_HOST_DIMS(%(images)s)[3];
-            int icount            = CudaNdarray_HOST_DIMS(%(images)s)[4];
+        igroups, icolors_per_group, irows, icols, icount = images.shape
+        hgroups, hcolors_per_group, hrows, hcols, hcount = hidacts.shape
 
-            int fmodulesR         = CudaNdarray_HOST_DIMS(%(filters)s)[0];
-            int fmodulesC         = CudaNdarray_HOST_DIMS(%(filters)s)[1];
-            int fcolors           = CudaNdarray_HOST_DIMS(%(filters)s)[2];
-            int frows             = CudaNdarray_HOST_DIMS(%(filters)s)[3];
-            int fcols             = CudaNdarray_HOST_DIMS(%(filters)s)[4];
-            int fgroups           = CudaNdarray_HOST_DIMS(%(filters)s)[5];
-            int filters_per_group = CudaNdarray_HOST_DIMS(%(filters)s)[6];
+        if irows != icols:
+            raise NotImplementedError("non-square image argument",
+                    (irows, icols))
+        if hrows != hcols:
+            raise NotImplementedError("non-square filter shape",
+                    (frows, fcols))
+        if icount != hcount:
+            raise NotImplementedError("non-square filter shape",
+                    (icount, hcount))
+        if frows != fcols:
+            raise NotImplementedError("non-square filter shape",
+                    (frows, fcols))
 
-            // XXX: use this parameter properly
-            int paddingStart = 0;
-            int imgStride = icount;
-            float scaleTargets = 0.0;
-            float scaleOutput = 1.0;
-            bool conv = false;
+        fmodulesR = hrows
+        fmodulesC = hcols
+        fcolors = icolors_per_group
+        # frows already assigned
+        # fcols already assigned
+        fgroups = hgroups
+        filters_per_group = hcolors_per_group
 
-            if (igroups != fgroups)
-            {
-                PyErr_Format(PyExc_ValueError,
-                    "igroups != fgroups (%%i != %%i)",
-                    igroups, fgroups);
-                %(fail)s;
-            }
+        target = numpy.zeros(
+                (fmodulesR, fmodulesC, fcolors, frows, fcols, fgroups,
+                    filters_per_group),
+                dtype=images.dtype)
 
-            if (icolors_per_group != fcolors)
-            {
-                PyErr_Format(PyExc_ValueError,
-                    "icolors_per_group != fcolors (%%i != %%i)",
-                    icolors_per_group,
-                    fcolors);
-                %(fail)s;
-            }
+        for mR in xrange(fmodulesR):
+            for mC in xrange(fmodulesC):
+                for gg in xrange(igroups):
+                    img_r_offset = mR * self.module_stride
+                    img_c_offset = mC * self.module_stride
+                    rc_images = images[gg, :,
+                            img_r_offset:img_r_offset + frows,
+                            img_c_offset:img_c_offset + fcols,
+                            :]
+                    # rc_images is fcolors x frows x fcols x count
 
-            if (!%(responses)s)
-            {
-                Py_XDECREF(%(responses)s);
-                int dims[5];
-                dims[0] = fgroups;
-                dims[1] = filters_per_group;
-                dims[2] = fmodulesR;
-                dims[3] = fmodulesC;
-                dims[4] = icount;
-                %(responses)s = (CudaNdarray*)CudaNdarray_NewDims(5, dims);
-                if (!%(responses)s)
-                {
-                    %(fail)s;
-                }
-            }
+                    rc_target = target[gg, :, mR, mC, :]
+                    # rc_target is fpg x count
 
-            assert(CudaNdarray_is_c_contiguous(%(responses)s));
+                    rc_images.reshape(-1, icount))
+                        rc_filters.reshape(-1, filters_per_group).T,
+                    rc_filters = numpy.dot(rc_images, rc_target.T)
 
-            if (_filterActs(
-                    igroups,
-                    icolors_per_group,
-                    irows,
-                    icols,
-                    icount,
-                    fmodulesR,
-                    fmodulesC,
-                    frows,
-                    fcols,
-                    filters_per_group,
-                    CudaNdarray_DEV_DATA(%(images)s),
-                    CudaNdarray_DEV_DATA(%(filters)s),
-                    CudaNdarray_DEV_DATA(%(responses)s),
-                    paddingStart,
-                    %(moduleStride)s,
-                    imgStride,
-                    scaleTargets,
-                    scaleOutput,
-                    conv))
-            {
-                %(fail)s;
-            }
-        } // end bogus scope used for vars
+                    filters[mR, mC, :, :, :, gg, :] = rc_filters.reshape(
+                            (fcolors, frows, fcols, filters_per_group))
 
-        """
+        ostor[0][0] = target
 
-        return sio.getvalue() % locals()
 
-    def perform(self, *args, **kwargs):
-        return theano.Op.perform(self, *args, **kwargs)
+class ImgActs(Base):
+    """
+    XXX
+    """
+    def make_node(self, images, filters, irows, icols):
+        images, hidacts, irows, icols = map(theano.tensor.as_tensor_variable,
+                [images, hidacts, irows, icols])
+        if irows.dtype[:3] not in ('int', 'uin'):
+            raise TypeError(irows)
+        if icols.dtype[:3] not in ('int', 'uin'):
+            raise TypeError(irows)
+        if irows.ndim:
+            raise TypeError('irows should be scalar', irows)
+        if icols.ndim:
+            raise TypeError('icols should be scalar', icols)
+        return theano.gof.Apply(self,
+                [filters, hidacts, irows, icols],
+                [hidacts.type()])
+
+    def perform(self, node, iargs, ostor):
+        filters, hidacts = iargs
+
+        hgroups, hcolors_per_group, hrows, hcols, hcount = hidacts.shape
+
+        fmodulesR, fmodulesC, fcolors, frows, fcols = filters.shape[:-2]
+        fgroups, filters_per_group = filters.shape[-2:]
+
+        igroups = fgroups
+        icolors_per_group = fcolors
+        icount = hcount
+
+        if hrows != hcols:
+            raise NotImplementedError("non-square hidacts argument",
+                    (hrows, hcols))
+        if frows != fcols:
+            raise NotImplementedError("non-square filter shape",
+                    (frows, fcols))
+        if fmodulesR != fmodulesC:
+            raise NotImplementedError('non-square filter grouping',
+                    (fmodulesR, fmodulesC))
+        if hcolors_per_group != filters_per_group:
+            raise ValueError("color counts don't match",
+                    (hcolors_per_group, filters_per_group))
+        if irows != icols:
+            raise NotImplementedError("non-square image argument",
+                    (irows, icols))
+
+        target = numpy.zeros(
+                (igroups, icolors_per_group, irows, icols, icount),
+                dtype=hidacts.dtype)
+
+        for mR in xrange(fmodulesR):
+            for mC in xrange(fmodulesC):
+                for gg in xrange(igroups):
+                    rc_filters = filters[mR, mC, :, :, :, gg, :]
+                    # rc_filters is fcolors x frows x fcols x fpg
+
+                    rc_target = target[gg, :, mR, mC, :] = rc_target
+                    # rc_target is fpg x icount
+
+                    img_r_offset = mR * self.module_stride
+                    img_c_offset = mC * self.module_stride
+                    images[gg, :,
+                            img_r_offset:img_r_offset + frows,
+                            img_c_offset:img_c_offset + fcols,
+                            :] += numpy.dot(
+                                    rc_filters.reshape(-1, filters_per_group),
+                                    rc_target
+                                    ).reshape(
+                                    (fcolors, frows, fcols, icount))
+        ostor[0][0] = target
+
+    def grad(self, inputs, goutputs):
+        images, filters = inputs
+        frows = filters.shape[3]
+        fcols = filters.shape[4]
+        gimages = ImgActs(module_stride=self.module_stride)(
+                filters, goutputs[0])
+        gfilters = WeightActs(
+                module_stride=self.module_stride,
+                partial_sum=1)(images, goutputs[0], frows, fcols)
+        return [gimages, gfilters]
+
+
