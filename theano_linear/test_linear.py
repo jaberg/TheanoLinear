@@ -6,6 +6,7 @@ import numpy
 from .linear import LinearTransform
 from .linear import dot
 from .linear import dot_shape
+from .linear import dot_shape_from_shape
 
 
 class ReshapeBase(LinearTransform):
@@ -53,6 +54,16 @@ class SelfTestMixin(object):
     def test_shape_A_xr(self):
         A_xr = dot(self.A, self.xr)
         assert A_xr.shape == dot_shape(self.A, self.xr)
+
+    def test_shape_xrT_AT(self):
+        xrT_AT = dot(self.A.T.transpose_left(self.xr), self.A.T)
+        assert xrT_AT.shape == dot_shape_from_shape(
+                self.A.T.transpose_left_shape(self.xr.shape), self.A.T)
+
+    def test_shape_AT_xlT(self):
+        AT_xlT = dot(self.A.T, self.A.T.transpose_right(self.xl))
+        assert AT_xlT.shape == dot_shape_from_shape(self.A.T,
+                A.T.transpose_right_shape(self.xr.shape))
 
 
 class TestReshapeL(SelfTestMixin):
