@@ -44,10 +44,10 @@ class ReshapeR(ReshapeBase):
         return x.reshape(self._to_shp + RR)
 
 
-class SelfTestMixin(object):
+class NumericSelfTestMixin(object):
     """
     Generic tests that assert the self-consistency of LinearTransform
-    implementations.
+    implementations that operate on numpy arrays.
 
     """
 
@@ -77,7 +77,7 @@ class SelfTestMixin(object):
         assert AT_xlT.shape == AT_xlt_shape, (AT_xlT.shape, AT_xlt_shape)
 
 
-class TestReshapeL(SelfTestMixin):
+class TestReshapeL(NumericSelfTestMixin):
     def setUp(self):
         self.xl = numpy.random.randn(4, 3, 2)  # for left-mul
         self.xr = numpy.random.randn(6, 5)     # for right-mul
@@ -88,7 +88,7 @@ class TestReshapeL(SelfTestMixin):
         xl_A = dot(self.xl, self.A)
         assert numpy.all(xl_A == self.xl.reshape(xl_A.shape))
 
-class TestReshapeR(SelfTestMixin):
+class TestReshapeR(NumericSelfTestMixin):
     def setUp(self):
         self.xl = numpy.random.randn(4, 3, 2)  # for left-mul
         self.xr = numpy.random.randn(6, 5)     # for right-mul

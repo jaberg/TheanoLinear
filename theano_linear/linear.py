@@ -5,10 +5,6 @@ import sys
 import copy
 import numpy
 import theano
-import theano.tensor as tensor
-
-# XXX: import this function to utils
-import pylearn.io.image_tiling
 
 prod = numpy.prod
 
@@ -28,8 +24,12 @@ def dot_shape_from_shape(x, y):
     """Compute `dot(x, y).shape` from the shape of the non-LinearTransform
     """
     if isinstance(x, LinearTransform):
+        if type(y) != tuple:
+            raise TypeError('y should be tuple', y)
         return x.col_shape() + x.split_right_shape(y, False)[1]
     elif isinstance(y, LinearTransform):
+        if type(x) != tuple:
+            raise TypeError('x should be tuple', x)
         return y.split_left_shape(x, False)[0] + y.row_shape()
     else:
         raise TypeError('One of x or y should be a LinearTransform')
@@ -98,7 +98,6 @@ class LinearTransform(object):
             if 'either lmul' in str(e):
                 raise TypeError('either lmul or rmul_T must be implemented')
 
-
     def lmul_T(self, x):
         # this is a circular definition with rmul so that they are both
         # implemented as soon as one of them is overridden by a base class.
@@ -145,8 +144,7 @@ class LinearTransform(object):
         XXX
         """
         # supposing self.row_shape is (R1,)...
-        xshp = x.shape
-        assert type(xshp) is tuple
+        xshp = tuple(x.shape)
         cshp = self.col_shape()
         if T:
             # C1 C2 C3 R1 R2 -> R1 R2 C1 C2 C3
@@ -162,8 +160,7 @@ class LinearTransform(object):
         XXX
         """
         # supposing self.row_shape is (R1,)...
-        xshp = x.shape
-        assert type(xshp) is tuple
+        xshp = tuple(x.shape)
         rshp = self.row_shape()
         if T:
             # C1 C2 R1 -> R1 C1 C2
@@ -191,7 +188,9 @@ class LinearTransform(object):
             # R1 R2 C1 C2 C3
             ss = len(xshp) - len(cshp)
             RR, CC = xshp[:ss], xshp[ss:]
-        if CC != cshp:
+        if len(CC) != len(cshp) or (
+                not all((isinstance(cc, theano.Variable) or cc == ci)
+                    for cc, ci in zip(CC, cshp))):
             raise ValueError('invalid left shape',
                     dict(xshp=xshp, col_shape=cshp, xcols=CC, T=T))
         if T:
@@ -216,8 +215,10 @@ class LinearTransform(object):
             # R1 R2 C1 C2 C3
             ss = len(rshp)
             RR, CC = xshp[:ss], xshp[ss:]
-        if RR != rshp:
-            raise ValueError('invalid right shape',
+        if len(RR) != len(rshp) or (
+                not all((isinstance(rr, theano.Variable) or rr == ri)
+                    for rr, ri in zip(RR, rshp))):
+            raise ValueError('invalid left shape',
                     dict(xshp=xshp, row_shape=rshp, xrows=RR, T=T))
         if T:
             return CC, RR
@@ -335,65 +336,6 @@ class TransposeTransform(LinearTransform):
 
 
 if 0: # needs to be brought up to date with LinearTransform method names
-    class MatrixMul(LinearTransform):
-        """
-        Linear transform backed by an actual matrix.
-        """
-        # Works for Sparse and TensorType matrices
-        def __init__(self, W, row_shape=None, col_shape=None):
-            """
-
-            If W is not shared variable, row_shape and col_shape must be
-            specified.
-            """
-            super(MatrixMul, self).__init__([W])
-            self._W = W
-            Wval = None
-            if row_shape is None:
-                Wval = W.get_value(borrow=True)
-                rows, cols = Wval.shape
-                self.__row_shape = rows,
-            else:
-                self.__row_shape = tuple(row_shape)
-            if col_shape is None:
-                if Wval is None:
-                    Wval = W.get_value(borrow=True)
-                    rows, cols = Wval.shape
-                self.__col_shape = cols,
-            else:
-                self.__col_shape = tuple(col_shape)
-
-        def _lmul(self, x, T):
-            if T:
-                W = self._W.T
-                rshp = tensor.stack(x.shape[0], *self.__row_shape)
-            else:
-                W = self._W
-                rshp = tensor.stack(x.shape[0], *self.__col_shape)
-            rval = theano.dot(x.flatten(2), W).reshape(rshp)
-            return rval
-        def _row_shape(self):
-            return self.__row_shape
-        def _col_shape(self):
-            return self.__col_shape
-
-        def print_status(self):
-            print ndarray_status(self._W.get_value(borrow=True), msg=self._W.name)
-
-        def _tile_columns(self, channel_major=False, scale_each=False,
-                min_dynamic_range=1e-4, **kwargs):
-            W = self._W.get_value(borrow=False).T
-            shape = self.row_shape()
-            if channel_major:
-                W.shape = (W.shape[0:1]+shape)
-                W = W.transpose(0,2,3,1) #put colour last
-            else:
-                raise NotImplementedError()
-
-            return pylearn.io.image_tiling.tile_slices_to_image(W,
-                    scale_each=scale_each,
-                    **kwargs)
-
     class Concat(LinearTransform):
         """
         Form a linear map of the form [A B ... Z].
