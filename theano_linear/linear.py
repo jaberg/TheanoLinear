@@ -28,9 +28,9 @@ def dot_shape_from_shape(x, y):
     """Compute `dot(x, y).shape` from the shape of the non-LinearTransform
     """
     if isinstance(x, LinearTransform):
-        return x.col_shape() + x.split_right_shape(y)[1]
+        return x.col_shape() + x.split_right_shape(y, False)[1]
     elif isinstance(y, LinearTransform):
-        return y.split_left_shape(x)[0] + y.row_shape()
+        return y.split_left_shape(x, False)[0] + y.row_shape()
     else:
         raise TypeError('One of x or y should be a LinearTransform')
 
@@ -77,97 +77,179 @@ class LinearTransform(object):
         return Sum([other, self])
 
     # OVER-RIDE THIS (or rmul)
-    def lmul(self, x, T=False):
-        """mul(x, A) or mul(x, A.T)
-
-        If T is True this method returns mul(x, A.T).
-        If T is False this method returns mul(x, A).
+    def lmul(self, x):
+        """mul(x, A)
 
         """
         # this is a circular definition with rmul so that they are both
         # implemented as soon as one of them is overridden by a base class.
-        return self.transpose_right(
-                self.rmul(
-                    self.transpose_left(x),
-                    not T))
+
+        try:
+            # dot(x, A)
+            # = dot(A.T, x.T).T
+            AT_xT = self.rmul_T(self.transpose_left(x, False))
+            rval = self.transpose_right(AT_xT, True)
+            return rval
+        except RuntimeError, e:
+            if 'ecursion' in str(e):
+                raise TypeError('either lmul or rmul_T must be implemented')
+            raise
+        except TypeError, e:
+            if 'either lmul' in str(e):
+                raise TypeError('either lmul or rmul_T must be implemented')
+
+
+    def lmul_T(self, x):
+        # this is a circular definition with rmul so that they are both
+        # implemented as soon as one of them is overridden by a base class.
+
+        # dot(x, A.T)
+        # = dot(A, x.T).T
+        A_xT = self.rmul(self.transpose_right(x, True))
+        rval = self.transpose_left(A_xT, True)
+        return rval
 
     # OVER-RIDE THIS (or lmul)
-    def rmul(self, x, T=False):
+    def rmul(self, x):
         """mul(A, x) or mul(A.T, x)
         """
         # this is a circular definition with rmul so that they are both
         # implemented as soon as one of them is overridden by a base class.
-        return self.transpose_left(
-                self.lmul(
-                    self.transpose_right(x),
-                    not T))
 
-    def transpose_left(self, x):
+        try:
+            # dot(A, x)
+            # = dot(x.T, A.T).T
+            xT_AT = self.lmul_T(self.transpose_right(x, False))
+            rval = self.transpose_left(xT_AT, False)
+            return rval
+        except RuntimeError, e:
+            if 'ecursion' in str(e):
+                raise TypeError('either rmul or lmul_T must be implemented')
+            raise
+        except TypeError, e:
+            if 'either lmul' in str(e):
+                raise TypeError('either rmul or lmul_T must be implemented')
+
+    def rmul_T(self, x):
+        # this is a circular definition with rmul so that they are both
+        # implemented as soon as one of them is overridden by a base class.
+
+        # dot (A.T, x)
+        # = dot(x.T, A).T
+        xT_A = self.lmul(self.transpose_left(x, True))
+        rval = self.transpose_right(xT_A, True)
+        return rval
+
+    def transpose_left(self, x, T):
         """
+        XXX
         """
+        # supposing self.row_shape is (R1,)...
+        xshp = x.shape
+        assert type(xshp) is tuple
         cshp = self.col_shape()
-        xshp = x.shape
-        ndim_rows = x.ndim - len(cshp)
-        pattern = range(ndim_rows, x.ndim) + range(ndim_rows)
+        if T:
+            # C1 C2 C3 R1 R2 -> R1 R2 C1 C2 C3
+            ss = len(cshp)
+        else:
+            # R1 R2 C1 C2 C3 -> C1 C2 C3 R1 R2
+            ss = x.ndim - len(cshp)
+        pattern = range(ss, x.ndim) + range(ss)
         return x.transpose(pattern)
 
-    def transpose_right(self, x):
+    def transpose_right(self, x, T):
         """
+        XXX
         """
+        # supposing self.row_shape is (R1,)...
+        xshp = x.shape
+        assert type(xshp) is tuple
         rshp = self.row_shape()
-        xshp = x.shape
-        ndim_rows = len(rshp)
-        pattern = range(ndim_rows, x.ndim) + range(ndim_rows)
+        if T:
+            # C1 C2 R1 -> R1 C1 C2
+            ss = len(rshp)
+        else:
+            # R1 C1 C2 -> C1 C2 R1
+            ss = x.ndim - len(rshp)
+        pattern = range(ss, x.ndim) + range(ss)
         return x.transpose(pattern)
 
-    def transpose_left_shape(self, xshp):
+    def split_left_shape(self, xshp, T):
         """
+        XXX
         """
-        rowtuple, coltuple = self.split_left_shape(xshp)
-        return coltuple + rowtuple
-
-    def transpose_right_shape(self, xshp):
-        """
-        """
-        rowtuple, coltuple = self.split_right_shape(xshp)
-        return coltuple + rowtuple
-
-    def split_left_shape(self, xshp):
         if type(xshp) != tuple:
             raise TypeError('need tuple', xshp)
+        # supposing self.col_shape is (C1, C2, C3) ...
         cshp = self.col_shape()
         assert type(cshp) == tuple
-        if xshp[-len(cshp):] != cshp:
+        if T:
+            # C1 C2 C3 R1 R2
+            ss = len(cshp)
+            RR, CC = xshp[ss:], xshp[:ss]
+        else:
+            # R1 R2 C1 C2 C3
+            ss = len(xshp) - len(cshp)
+            RR, CC = xshp[:ss], xshp[ss:]
+        if CC != cshp:
             raise ValueError('invalid left shape',
-                    dict(xshp=xshp, col_shape=cshp))
-        return xshp[:-len(cshp)], xshp[-len(cshp):]
+                    dict(xshp=xshp, col_shape=cshp, xcols=CC, T=T))
+        if T:
+            return CC, RR
+        else:
+            return RR, CC
 
-    def split_right_shape(self, xshp):
+    def split_right_shape(self, xshp, T):
         """
+        XXX
         """
         if type(xshp) != tuple:
             raise TypeError('need tuple', xshp)
+        # supposing self.row_shape is (R1, R2) ...
         rshp = self.row_shape()
         assert type(rshp) == tuple
-        if xshp[:len(rshp)] != rshp:
+        if T:
+            # C1 C2 C3 R1 R2
+            ss = len(xshp) - len(rshp)
+            RR, CC = xshp[ss:], xshp[:ss]
+        else:
+            # R1 R2 C1 C2 C3
+            ss = len(rshp)
+            RR, CC = xshp[:ss], xshp[ss:]
+        if RR != rshp:
             raise ValueError('invalid right shape',
-                    dict(xshp=xshp, row_shape=rshp))
-        return xshp[:len(rshp)], xshp[len(rshp):]
+                    dict(xshp=xshp, row_shape=rshp, xrows=RR, T=T))
+        if T:
+            return CC, RR
+        else:
+            return RR, CC
 
-    def is_valid_left_shape(self, xshp):
+    def transpose_left_shape(self, xshp, T):
+        """
+        """
+        RR, CC = self.split_left_shape(xshp, T)
+        return CC + RR
+
+    def transpose_right_shape(self, xshp, T):
+        """
+        """
+        RR, CC = self.split_right_shape(xshp, T)
+        return CC + RR
+
+    def is_valid_left_shape(self, xshp, T):
         """
         """
         try:
-            self.split_left_shape(xshp)
+            self.split_left_shape(xshp, T)
             return True
         except ValueError:
             return False
 
-    def is_valid_right_shape(self, xshp):
+    def is_valid_right_shape(self, xshp, T):
         """
         """
         try:
-            self.split_right_shape(xshp)
+            self.split_right_shape(xshp, T)
             return True
         except ValueError:
             return False
@@ -201,35 +283,41 @@ class TransposeTransform(LinearTransform):
     def params(self):
         return self.base.params()
 
-    def lmul(self, x, T=False):
-        return self.base.lmul(x, not T)
+    def lmul(self, x):
+        return self.base.lmul_T(x)
 
-    def rmul(self, x, T=False):
-        return self.base.rmul(x, not T)
+    def lmul_T(self, x):
+        return self.base.lmul(x)
 
-    def transpose_left(self, x):
-        return self.base.transpose_right(x)
+    def rmul(self, x):
+        return self.base.rmul_T(x)
 
-    def transpose_right(self, x):
-        return self.base.transpose_left(x)
+    def rmul_T(self, x):
+        return self.base.rmul(x)
 
-    def transpose_left_shape(self, x):
-        return self.base.transpose_right_shape(x)
+    def transpose_left(self, x, T):
+        return self.base.transpose_right(x, not T)
 
-    def transpose_right_shape(self, x):
-        return self.base.transpose_left_shape(x)
+    def transpose_right(self, x, T):
+        return self.base.transpose_left(x, not T)
 
-    def split_left_shape(self, x):
-        return self.base.split_right_shape(x)
+    def transpose_left_shape(self, x, T):
+        return self.base.transpose_right_shape(x, not T)
 
-    def split_right_shape(self, x):
-        return self.base.split_left_shape(x)
+    def transpose_right_shape(self, x, T):
+        return self.base.transpose_left_shape(x, not T)
 
-    def is_valid_left_shape(self, x):
-        return self.base.is_valid_right_shape(x)
+    def split_left_shape(self, x, T):
+        return self.base.split_right_shape(x, not T)
 
-    def is_valid_right_shape(self, x):
-        return self.base.is_valid_left_shape(x)
+    def split_right_shape(self, x, T):
+        return self.base.split_left_shape(x, not T)
+
+    def is_valid_left_shape(self, x, T):
+        return self.base.is_valid_right_shape(x, not T)
+
+    def is_valid_right_shape(self, x, T):
+        return self.base.is_valid_left_shape(x, not T)
 
     def row_shape(self):
         return self.base.col_shape()

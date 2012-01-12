@@ -23,21 +23,25 @@ class ReshapeBase(LinearTransform):
 
 
 class ReshapeL(ReshapeBase):
-    def lmul(self, x, T=False):
-        # dot(x, A) or dot(x, A.T)
-        if T:
-            return x.reshape(x.shape[0:1] + self._from_shp)
-        else:
-            return x.reshape(x.shape[0:1] + self._to_shp)
+
+    def lmul(self, x):
+        RR, CC = self.split_left_shape(x.shape, False)
+        return x.reshape(RR + self._to_shp)
+
+    def rmul(self, x):
+        RR, CC = self.split_right_shape(x.shape, False)
+        return x.reshape(self._from_shp + CC)
 
 
 class ReshapeR(ReshapeBase):
-    def rmul(self, x, T=False):
-        # dot(A, x) or dot(A.T, x)
-        if T:
-            return x.reshape(x.shape[0:1] + self._from_shp)
-        else:
-            return x.reshape(x.shape[0:1] + self._to_shp)
+
+    def lmul_T(self, x):
+        CC, RR = self.split_right_shape(x.shape, True)
+        return x.reshape(CC + self._from_shp)
+
+    def rmul_T(self, x):
+        CC, RR = self.split_left_shape(x.shape, True)
+        return x.reshape(self._to_shp + RR)
 
 
 class SelfTestMixin(object):
@@ -53,17 +57,24 @@ class SelfTestMixin(object):
 
     def test_shape_A_xr(self):
         A_xr = dot(self.A, self.xr)
-        assert A_xr.shape == dot_shape(self.A, self.xr)
+        A_xr_shape = dot_shape(self.A, self.xr)
+        assert A_xr.shape == A_xr_shape, (A_xr.shape, A_xr_shape)
 
     def test_shape_xrT_AT(self):
-        xrT_AT = dot(self.A.T.transpose_left(self.xr), self.A.T)
+        # dot (xr.T, A.T)
+        AT = self.A.T
+        xrT_AT = dot(AT.transpose_left(self.xr, T=True), AT)
         assert xrT_AT.shape == dot_shape_from_shape(
-                self.A.T.transpose_left_shape(self.xr.shape), self.A.T)
+                AT.transpose_left_shape(self.xr.shape, T=True), AT)
 
     def test_shape_AT_xlT(self):
-        AT_xlT = dot(self.A.T, self.A.T.transpose_right(self.xl))
-        assert AT_xlT.shape == dot_shape_from_shape(self.A.T,
-                A.T.transpose_right_shape(self.xr.shape))
+        # dot (A.T, xl.T)
+        AT = self.A.T
+        AT_xlT = dot(AT,
+                AT.transpose_right(self.xl, T=True))
+        AT_xlt_shape = dot_shape_from_shape(AT,
+                AT.transpose_right_shape(self.xl.shape, T=True))
+        assert AT_xlT.shape == AT_xlt_shape, (AT_xlT.shape, AT_xlt_shape)
 
 
 class TestReshapeL(SelfTestMixin):
@@ -71,6 +82,17 @@ class TestReshapeL(SelfTestMixin):
         self.xl = numpy.random.randn(4, 3, 2)  # for left-mul
         self.xr = numpy.random.randn(6, 5)     # for right-mul
         self.A = ReshapeL((3, 2), (6,))
+        self.xl_A_shape = (4, 6)
+
+    def test_xl_A_value(self):
+        xl_A = dot(self.xl, self.A)
+        assert numpy.all(xl_A == self.xl.reshape(xl_A.shape))
+
+class TestReshapeR(SelfTestMixin):
+    def setUp(self):
+        self.xl = numpy.random.randn(4, 3, 2)  # for left-mul
+        self.xr = numpy.random.randn(6, 5)     # for right-mul
+        self.A = ReshapeR((3, 2), (6,))
         self.xl_A_shape = (4, 6)
 
     def test_xl_A_value(self):
