@@ -29,68 +29,78 @@ class LocalDot(LinearTransform):
         colors_per_group
         height
         width
-        filter_groups
+        color_groups
         filters_per_group
 
-    The result of left-multiplication a 5-
+    The result of left-multiplication a 5-tuple with shape:
+        filter_groups
+        filters_per_group
+        row_positions
+        col_positions
+        images
 
     """
 
-    def __init__(self, filters, img_shape,
+    def __init__(self, filters, irows, icols=None,
             subsample=(1, 1),
             border_mode='valid',
             padding_start=None,
             filters_shape=None,
             message=""):
-        super(LConv, self).__init__([filters])
+        LinearTransform.__init__(self, [filters])
         self._filters = filters
         if filters_shape is None:
             self._filters_shape = tuple(filters.get_value(borrow=True).shape)
         else:
             self._filters_shape = tuple(filters_shape)
-        self._img_shape = tuple(img_shape)
+        self._irows = irows
+        if icols is None:
+            self._icols = irows
+        else:
+            self._icols = icols
+        if self._icols != self._irows:
+            raise NotImplementedError('GPU code at least needs square imgs')
         self._subsample = tuple(subsample)
         self._border_mode = border_mode
         self._padding_start = padding_start
+
+        if len(self._filters_shape) != 7:
+            raise TypeError('need 7-tuple filter shape', self._filters_shape)
+        if self._subsample[0] != self._subsample[1]:
+            raise ValueError('subsampling must be same in rows and cols')
+
+        self._filter_acts = FilterActs(self._subsample[0])
+        self._img_acts = ImgActs(module_stride=self._subsample[0])
+
         if message:
             self._message = message
         else:
             self._message = filters.name
-        if not len(self._img_shape) == 5:
-            raise TypeError('need 5-tuple image shape', self._img_shape)
-        if not len(self._filters_shape) == 7:
-            raise TypeError('need 7-tuple filter shape', self._filters_shape)
 
-    def _lmul(self, x, T):
-        if T:
-            # left-multiply transpose of self with x
-            raise NotImplementedError()
-        else:
-            # left-multiply self with x
-            raise NotImplementedError()
+    def rmul(self, x):
+        return self._filter_acts(x, self._filters)
 
-    def _row_shape(self):
-        return self._img_shape[1:]
+    def rmul_T(self, x):
+        return self._img_acts(self._filters, x, self._irows, self._icols)
 
-    def _col_shape(self):
-        rows_cols = ConvOp.getOutputShape(
-                self._img_shape[2:],
-                self._filters_shape[2:],
-                self._subsample,
-                self._border_mode)
-        rval = (self._filters_shape[0],)+tuple(rows_cols)
-        return rval
+    def row_shape(self):
+        ishape = self.col_shape() + (-99,)
+        fshape = self._filters_shape
+        hshape, = self._filter_acts.infer_shape(None, (ishape, fshape))
+        assert hshape[-1] == -99
+        return hshape[:-1]
 
-    def _tile_columns(self, scale_each=True, **kwargs):
-        return pylearn.io.image_tiling.tile_slices_to_image(
-                self._filters.get_value()[:,:,::-1,::-1].transpose(0,2,3,1),
-                scale_each=scale_each,
-                **kwargs)
+    def col_shape(self):
+        fshape = self._filters_shape
+        fmodulesR, fmodulesC, fcolors, frows, fcols = fshape[:-2]
+        fgroups, filters_per_group = fshape[-2:]
+
+        return fgroups, fcolors, self._irows, self._icols
+
 
     def print_status(self):
         print ndarray_status(
                 self._filters.get_value(borrow=True),
-                msg='LConv{%s}'%self._message)
-
-
+                msg='%s{%s}'% (self.__class__.__name__,
+                    self._message))
 

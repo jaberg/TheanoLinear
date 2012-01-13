@@ -422,6 +422,7 @@ if 0: # needs to be brought up to date with LinearTransform method names
                 W.print_status()
 
 
+if 0: # needs to be brought up to date with LinearTransform method names
     class Sum(LinearTransform):
         def __init__(self, terms):
             self.terms = terms
@@ -445,7 +446,6 @@ if 0: # needs to be brought up to date with LinearTransform method names
                 t.print_status()
         def _tile_columns(self):
             raise NotImplementedError('TODO')
-
 
 
 if 0: # This is incomplete

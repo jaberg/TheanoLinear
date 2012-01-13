@@ -7,34 +7,43 @@ import theano
 
 from localdot import LocalDot
 
+from ..test_matrixmul import SymbolicSelfTestMixin
 
-class TestLocalDot(unittest.TestCase):
-    def setUp(self):
-        # XXX: use theano random
-        numpy.random.rand.seed(234)
+
+class TestLocalDot32x32(unittest.TestCase, SymbolicSelfTestMixin):
+    channels = 3
+    bsize = 10     # batch size
+    imshp = (32, 32)
+    ksize = 5
+    nkern_per_group = 16
+    subsample_stride = 1
+    ngroups = 1
+    icount = 1
 
     def rand(self, shp):
-        return numpy.random.rand(shp).astype('float32')
+        return numpy.random.rand(*shp).astype('float32')
 
-    def test_32x32(self):
-        channels = 3
-        bsize = 10     # batch size
-        imshp = (32, 32)
-        ksize = 5
-        nkern_per_group = 16
-        subsample_strides = 1, 2, 3, 4
-        ngroups = 1, 3
-        icount = 1
+    def setUp(self):
+        numpy.random.seed(234)
 
-        for subsample_stride in subsample_strides:
-            for ngroup in ngroups:
-                fModulesR = (imshp[0] - ksize + 1) // subsample_stride
-                fModulesC = fModulesR
-                fshape = (fModulesR, fModulesC, channels // ngroup,
-                        ksize, ksize, ngroups, nkern_per_group)
-                ishape = (ngroup, channels // ngroup, imshp[0], imshp[1],
-                        icount)
-                filters = self.rand(fshape)
-                LocalDot(filters, ishape,
-                        subsample=(subsample_strides, subsample_strides))
+        fModulesR = (self.imshp[0] - self.ksize + 1) // self.subsample_stride
+        fModulesC = fModulesR
+        self.fshape = (fModulesR, fModulesC, self.channels // self.ngroups,
+                self.ksize, self.ksize, self.ngroups, self.nkern_per_group)
+        self.ishape = (self.ngroups, self.channels // self.ngroups,
+                self.imshp[0], self.imshp[1], self.icount)
+        self.hshape = (self.ngroups, self.nkern_per_group, fModulesR, fModulesC,
+                self.icount)
+
+        filters = theano.shared(self.rand(self.fshape))
+
+        self.A = LocalDot(filters, self.imshp[0], self.imshp[1],
+                subsample=(self.subsample_stride, self.subsample_stride))
+
+        self.xlval = self.rand(self.ishape)
+        self.xrval = self.rand(self.hshape)
+
+        self.xl = theano.shared(self.xlval)
+        self.xr = theano.shared(self.xrval)
+
 

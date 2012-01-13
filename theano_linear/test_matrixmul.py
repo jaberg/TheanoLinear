@@ -56,7 +56,7 @@ class SymbolicSelfTestMixin(object):
                 AT_xlt_shape])
 
 
-class TestMatrixMul(SymbolicSelfTestMixin):
+class TestMatrixMul(unittest.TestCase, SymbolicSelfTestMixin):
     def setUp(self):
         self.xlval = 0.5 + numpy.random.randn(4, 3, 2)
         self.xrval = 0.5 + numpy.random.randn(7, 5)

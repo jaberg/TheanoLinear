@@ -6,6 +6,16 @@ import numpy
 import theano
 import StringIO
 
+def any_symbolic(*args):
+    """
+    Return True iff any a in `args` is a theano Variable
+    """
+    for a in args:
+        if isinstance(a, theano.Variable):
+            return True
+    return False
+
+
 class Base(theano.Op):
     def __init__(self,
             module_stride=1,
@@ -72,22 +82,9 @@ class FilterActs(theano.Op):
         fmodulesR, fmodulesC, fcolors, frows, fcols = filters.shape[:-2]
         fgroups, filters_per_group = filters.shape[-2:]
 
-        if irows != icols:
-            raise NotImplementedError("non-square image argument",
-                    (irows, icols))
-        if frows != fcols:
-            raise NotImplementedError("non-square filter shape",
-                    (frows, fcols))
-        if fmodulesR != fmodulesC:
-            raise NotImplementedError('non-square filter grouping',
-                    (fmodulesR, fmodulesC))
-        if icolors_per_group != fcolors:
-            raise ValueError("color counts don't match",
-                    (icolors_per_group, fcolors))
+        hshape = self.infer_shape(node, (images.shape, filters.shape))
 
-        target = numpy.zeros(
-                (fgroups, filters_per_group, fmodulesR, fmodulesC, icount),
-                dtype=images.dtype)
+        target = numpy.zeros(hshape, dtype=images.dtype)
 
         for mR in xrange(fmodulesR):
             for mC in xrange(fmodulesC):
@@ -118,6 +115,29 @@ class FilterActs(theano.Op):
                 partial_sum=1)(images, goutputs[0], frows, fcols)
         return [gimages, gfilters]
 
+    def infer_shape(self, node, shapes):
+        ishape, fshape = shapes
+
+        igroups, icolors_per_group, irows, icols, icount = ishape
+        fmodulesR, fmodulesC, fcolors, frows, fcols = fshape[:-2]
+        fgroups, filters_per_group = fshape[-2:]
+
+        if not any_symbolic(irows, icols) and irows != icols:
+            raise ValueError("non-square image argument",
+                    (irows, icols))
+        if not any_symbolic(frows, fcols) and frows != fcols:
+            raise ValueError("non-square filter shape",
+                    (frows, fcols))
+        if not any_symbolic(fmodulesR, fmodulesC) and fmodulesR != fmodulesC:
+            raise ValueError('non-square filter grouping',
+                    (fmodulesR, fmodulesC))
+        if (not any_symbolic(icolors_per_group, fcolors)
+                and icolors_per_group != fcolors):
+            raise ValueError("color counts don't match",
+                    (icolors_per_group, fcolors))
+
+        hshape = (fgroups, filters_per_group, fmodulesR, fmodulesC, icount)
+        return [hshape]
 
 class WeightActs(theano.Op):
     """
@@ -220,8 +240,7 @@ class WeightActs(theano.Op):
                     rc_target = target[gg, :, mR, mC, :]
                     # rc_target is fpg x count
 
-                    rc_images.reshape(-1, icount))
-                        rc_filters.reshape(-1, filters_per_group).T,
+                    rc_images.reshape(-1, icount)
                     rc_filters = numpy.dot(rc_images, rc_target.T)
 
                     filters[mR, mC, :, :, :, gg, :] = rc_filters.reshape(
@@ -234,9 +253,9 @@ class ImgActs(Base):
     """
     XXX
     """
-    def make_node(self, images, filters, irows, icols):
-        images, hidacts, irows, icols = map(theano.tensor.as_tensor_variable,
-                [images, hidacts, irows, icols])
+    def make_node(self, filters, hidacts, irows, icols):
+        filters, hidacts, irows, icols = map(theano.tensor.as_tensor_variable,
+                [filters, hidacts, irows, icols])
         if irows.dtype[:3] not in ('int', 'uin'):
             raise TypeError(irows)
         if icols.dtype[:3] not in ('int', 'uin'):
@@ -245,12 +264,16 @@ class ImgActs(Base):
             raise TypeError('irows should be scalar', irows)
         if icols.ndim:
             raise TypeError('icols should be scalar', icols)
+        if filters.ndim != 7:
+            raise TypeError('filters must be 7d tensor', filters)
+        if hidacts.ndim != 5:
+            raise TypeError('hidacts must be 5d tensor', filters)
         return theano.gof.Apply(self,
                 [filters, hidacts, irows, icols],
                 [hidacts.type()])
 
     def perform(self, node, iargs, ostor):
-        filters, hidacts = iargs
+        filters, hidacts, irows, icols = iargs
 
         hgroups, hcolors_per_group, hrows, hcols, hcount = hidacts.shape
 
