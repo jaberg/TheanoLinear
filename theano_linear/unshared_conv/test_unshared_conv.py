@@ -7,8 +7,6 @@ import theano
 from theano.sandbox.cuda.var import float32_shared_constructor
 
 from .unshared_conv import FilterActs
-from .unshared_conv import GpuFilterActs
-from .unshared_conv import GpuWeightActs
 
 class TestFilterActs(unittest.TestCase):
     ishape = (1, 1, 4, 4, 2) # 2 4x4 greyscale images
