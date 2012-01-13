@@ -15,6 +15,8 @@ import theano.sparse
 from theano import sparse, gof, Op, tensor
 from theano.printing import Print
 
+raise ImportError("THIS OLD CODE'S TESTS ARE BIT-ROTTEN")
+
 class RasterOrders(object):
     @staticmethod
     def row_col_channel(row, col, channel, n_rows, n_cols, n_channels):
