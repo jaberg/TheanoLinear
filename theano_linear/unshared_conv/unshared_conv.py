@@ -82,7 +82,7 @@ class FilterActs(theano.Op):
         fmodulesR, fmodulesC, fcolors, frows, fcols = filters.shape[:-2]
         fgroups, filters_per_group = filters.shape[-2:]
 
-        hshape = self.infer_shape(node, (images.shape, filters.shape))
+        hshape = self.infer_shape(node, (images.shape, filters.shape))[0]
 
         target = numpy.zeros(hshape, dtype=images.dtype)
 
@@ -138,6 +138,7 @@ class FilterActs(theano.Op):
 
         hshape = (fgroups, filters_per_group, fmodulesR, fmodulesC, icount)
         return [hshape]
+
 
 class WeightActs(theano.Op):
     """
@@ -284,6 +285,8 @@ class ImgActs(Base):
         icolors_per_group = fcolors
         icount = hcount
 
+        print 'FILTERS SHAPE:', filters.shape
+        print 'HIDACTS SHAPE:', hidacts.shape
         if hrows != hcols:
             raise NotImplementedError("non-square hidacts argument",
                     (hrows, hcols))
@@ -300,7 +303,7 @@ class ImgActs(Base):
             raise NotImplementedError("non-square image argument",
                     (irows, icols))
 
-        target = numpy.zeros(
+        images = numpy.zeros(
                 (igroups, icolors_per_group, irows, icols, icount),
                 dtype=hidacts.dtype)
 
@@ -310,8 +313,8 @@ class ImgActs(Base):
                     rc_filters = filters[mR, mC, :, :, :, gg, :]
                     # rc_filters is fcolors x frows x fcols x fpg
 
-                    rc_target = target[gg, :, mR, mC, :] = rc_target
-                    # rc_target is fpg x icount
+                    rc_hidacts = hidacts[gg, :, mR, mC, :]
+                    # rc_hidacts is fpg x icount
 
                     img_r_offset = mR * self.module_stride
                     img_c_offset = mC * self.module_stride
@@ -320,10 +323,10 @@ class ImgActs(Base):
                             img_c_offset:img_c_offset + fcols,
                             :] += numpy.dot(
                                     rc_filters.reshape(-1, filters_per_group),
-                                    rc_target
+                                    rc_hidacts
                                     ).reshape(
                                     (fcolors, frows, fcols, icount))
-        ostor[0][0] = target
+        ostor[0][0] = images
 
     def grad(self, inputs, goutputs):
         images, filters = inputs

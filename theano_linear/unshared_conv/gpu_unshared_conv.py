@@ -1,3 +1,14 @@
+import inspect
+import os
+import StringIO
+
+import theano
+
+from .unshared_conv import FilterActs
+from .unshared_conv import WeightActs
+from .unshared_conv import ImgActs
+
+_this_dir = os.path.dirname(inspect.getfile(inspect.currentframe()))
 
 class GpuFilterActs(FilterActs):
     """
@@ -5,7 +16,7 @@ class GpuFilterActs(FilterActs):
 
     """
     def c_support_code(self):
-        cufile = open('filter_acts.cu')
+        cufile = open(os.path.join(_this_dir, 'filter_acts.cu'))
         return cufile.read()
 
     def c_code_cache_version(self):
@@ -208,7 +219,7 @@ class GpuWeightActs(theano.Op):
                 [otype()])
 
     def c_support_code(self):
-        cufile = open('weight_acts.cu')
+        cufile = open(os.path.join(_this_dir, 'weight_acts.cu'))
         return cufile.read()
 
     def c_code_cache_version(self):

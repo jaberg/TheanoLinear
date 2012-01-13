@@ -83,14 +83,14 @@ class LocalDot(LinearTransform):
     def rmul_T(self, x):
         return self._img_acts(self._filters, x, self._irows, self._icols)
 
-    def row_shape(self):
-        ishape = self.col_shape() + (-99,)
+    def col_shape(self):
+        ishape = self.row_shape() + (-99,)
         fshape = self._filters_shape
         hshape, = self._filter_acts.infer_shape(None, (ishape, fshape))
         assert hshape[-1] == -99
         return hshape[:-1]
 
-    def col_shape(self):
+    def row_shape(self):
         fshape = self._filters_shape
         fmodulesR, fmodulesC, fcolors, frows, fcols = fshape[:-2]
         fgroups, filters_per_group = fshape[-2:]

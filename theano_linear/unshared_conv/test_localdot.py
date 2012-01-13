@@ -18,7 +18,7 @@ class TestLocalDot32x32(unittest.TestCase, SymbolicSelfTestMixin):
     nkern_per_group = 16
     subsample_stride = 1
     ngroups = 1
-    icount = 1
+    icount = 2
 
     def rand(self, shp):
         return numpy.random.rand(*shp).astype('float32')
@@ -40,8 +40,8 @@ class TestLocalDot32x32(unittest.TestCase, SymbolicSelfTestMixin):
         self.A = LocalDot(filters, self.imshp[0], self.imshp[1],
                 subsample=(self.subsample_stride, self.subsample_stride))
 
-        self.xlval = self.rand(self.ishape)
-        self.xrval = self.rand(self.hshape)
+        self.xlval = self.rand((self.hshape[-1],) + self.hshape[:-1])
+        self.xrval = self.rand(self.ishape)
 
         self.xl = theano.shared(self.xlval)
         self.xr = theano.shared(self.xrval)

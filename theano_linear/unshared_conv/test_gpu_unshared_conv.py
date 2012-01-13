@@ -1,3 +1,18 @@
+import unittest
+
+import numpy
+
+import theano
+from theano.sandbox.cuda.var import float32_shared_constructor
+
+from .unshared_conv import FilterActs
+from .unshared_conv import WeightActs
+from .unshared_conv import ImgActs
+
+from .gpu_unshared_conv import GpuFilterActs
+from .gpu_unshared_conv import GpuWeightActs
+#from .gpu_unshared_conv import GpuFilterActs
+
 class TestGpuFilterActs(unittest.TestCase):
     """
     This class tests GpuWeightActs via the gradient of GpuFilterAct
