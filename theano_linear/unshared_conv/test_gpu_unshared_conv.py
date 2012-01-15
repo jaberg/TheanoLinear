@@ -9,11 +9,15 @@ from .unshared_conv import FilterActs
 from .unshared_conv import WeightActs
 from .unshared_conv import ImgActs
 
-from .gpu_unshared_conv import GpuFilterActs
-from .gpu_unshared_conv import GpuWeightActs
-#from .gpu_unshared_conv import GpuFilterActs
+from .gpu_unshared_conv import (
+        GpuFilterActs,
+        GpuWeightActs,
+        GpuImgActs,
+        )
 
-class TestGpuFilterActs(unittest.TestCase):
+import test_unshared_conv
+
+class TestGpuFilterActs(test_unshared_conv.TestFilterActs):
     """
     This class tests GpuWeightActs via the gradient of GpuFilterAct
 
@@ -23,18 +27,23 @@ class TestGpuFilterActs(unittest.TestCase):
     fshape = (2, 2, 1, 3, 3, 1, 16) # 5 3x3 filters at each location in a 2x2 grid
     module_stride = 1
     dtype = 'float32'
-
+    mode = theano.compile.get_default_mode().including('gpu_opt',
+            'fast_run', 'inplace').including('gpu_after_fusion',
+                    'fast_run', 'inplace')
 
     def setUp(self):
-        self.gfa = GpuFilterActs(self.module_stride)
-        self.gpu_images = float32_shared_constructor(
-                numpy.random.rand(*self.ishape).astype(self.dtype))
-        self.gpu_filters = float32_shared_constructor(
-                numpy.random.rand(*self.fshape).astype(self.dtype))
+        test_unshared_conv.TestFilterActs.setUp(self)
+        self.gpu_op = GpuFilterActs(
+                module_stride=self.module_stride,
+                partial_sum=1)
+        self.s_images = float32_shared_constructor(
+                self.s_images.get_value())
+        self.s_filters = float32_shared_constructor(
+                self.s_filters.get_value())
 
-    def test_shape(self):
-        gpuout = self.gfa(self.gpu_images, self.gpu_filters)
-        assert 'Cuda' in str(self.gpu_filters.type)
+    def test_gpu_shape(self):
+        gpuout = self.gpu_op(self.s_images, self.s_filters)
+        assert 'Cuda' in str(self.s_filters.type)
         f = theano.function([], gpuout)
         outval = f()
         assert outval.shape == (
@@ -42,12 +51,19 @@ class TestGpuFilterActs(unittest.TestCase):
                 self.fshape[0], self.fshape[1],
                 self.ishape[-1])
 
-    def test_gradient_type(self):
-        gpuout = self.gfa(self.gpu_images, self.gpu_filters)
-        dimages, dfilters = self.gfa.grad(gpuout.owner.inputs, [gpuout])
+    def test_insert_gpu_filter_acts(self):
+        out = self.op(self.s_images, self.s_filters)
+        f = self.function([], out)
+        assert isinstance(
+                f.maker.env.toposort()[0].op,
+                GpuFilterActs)
 
-        assert dfilters.broadcastable == (False,) * 7
-
+    def test_gpu_op_eq(self):
+        assert GpuFilterActs(1, 1) == GpuFilterActs(1, 1)
+        assert not (GpuFilterActs(1, 1) != GpuFilterActs(1, 1))
+        assert (GpuFilterActs(1, 2) != GpuFilterActs(1, 1))
+        assert (GpuFilterActs(2, 1) != GpuFilterActs(1, 1))
+        assert GpuFilterActs(2, 1) != None
 
 class TestGpuWeightActs(unittest.TestCase):
     """
@@ -78,7 +94,8 @@ class TestGpuWeightActs(unittest.TestCase):
         assert outval.shape == self.fshape
 
 
-class TestMatchFilterActs(unittest.TestCase):
+if 0:
+  class TestMatchFilterActs(unittest.TestCase):
     def setUp(self):
         numpy.random.seed(77)
 

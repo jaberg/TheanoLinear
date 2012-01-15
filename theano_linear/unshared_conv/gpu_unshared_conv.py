@@ -4,6 +4,9 @@ import StringIO
 
 import theano
 from theano.sandbox.cuda import CudaNdarrayType
+from theano.gof import local_optimizer
+from theano.sandbox.cuda.opt import register_opt
+from theano.sandbox.cuda import gpu_from_host, host_from_gpu
 
 from .unshared_conv import FilterActs
 from .unshared_conv import WeightActs
@@ -12,10 +15,27 @@ from .unshared_conv import ImgActs
 _this_dir = os.path.dirname(inspect.getfile(inspect.currentframe()))
 
 
+# XXX: move to cuda.opt and refactor there
+def any_from_gpu(*vv):
+    for v in  vv:
+        if v.owner and v.owner.op == host_from_gpu:
+            return True
+    return False
+
+
+# XXX: move to cuda.opt and refactor there
+def any_gpu_client(*vv):
+    for v in vv:
+        for (cl, pos) in v.clients:
+            if cl.op == gpu_from_host:
+                return True
+    return False
+
+
 class Base(theano.Op):
     def __init__(self,
-            module_stride=1,
-            partial_sum=1,
+            module_stride,
+            partial_sum,
             ):
         self.module_stride = module_stride
         self.partial_sum = partial_sum
@@ -54,6 +74,12 @@ class GpuFilterActs(Base):
         fmodulesR, fmodulesC, fcolors, frows, fcols = fbcast[:-2]
         fgroups, filters_per_group = fbcast[-2:]
         hbcast = (fgroups, filters_per_group, fmodulesR, fmodulesC, icount)
+        if not isinstance(images.type, CudaNdarrayType):
+            raise TypeError('gpu_filter_acts requires CudaNdarray images',
+                    images)
+        if not isinstance(filters.type, CudaNdarrayType):
+            raise TypeError('gpu_filter_acts requires CudaNdarray filters',
+                    filters)
         htype = CudaNdarrayType(broadcastable=hbcast)
         return theano.gof.Apply(self,
                 [images, filters],
@@ -108,6 +134,7 @@ class GpuFilterActs(Base):
                 %(filters)s->nd);
             %(fail)s;
         }
+        //fprintf(stderr, "really running on GPU\\n");
 
         { // new scope, new vars
 
@@ -196,47 +223,24 @@ class GpuFilterActs(Base):
 
         return sio.getvalue() % locals()
 
-    def perform(self, *args, **kwargs):
-        return theano.Op.perform(self, *args, **kwargs)
 
-    def grad(self, inputs, goutputs):
-        images, filters = inputs
-        frows = filters.shape[3]
-        fcols = filters.shape[4]
-        gimages = None
-        gfilters = GpuWeightActs(
-                module_stride=self.module_stride,
-                partial_sum=1)(images, goutputs[0], frows, fcols)
-        return [gimages, gfilters]
-
+@register_opt()
+@local_optimizer([])
+def insert_gpu_filter_acts(node):
+    if isinstance(node.op, FilterActs):
+        images, filters = node.inputs
+        if any_from_gpu(images, filters) or any_gpu_client(node.outputs):
+            gpu_filter_acts = GpuFilterActs(
+                    module_stride=node.op.module_stride,
+                    partial_sum=1)
+            return [host_from_gpu(gpu_filter_acts(
+                gpu_from_host(images),
+                gpu_from_host(filters)))]
 
 class GpuWeightActs(Base):
     """
     XXX
     """
-    def __init__(self, module_stride, partial_sum):
-        self.module_stride = module_stride
-        self.partial_sum = partial_sum
-
-    def _attributes(self):
-        return (
-                self.module_stride,
-                self.partial_sum,
-                )
-
-    def __eq__(self, other):
-        return (type(self) == type(other)
-                and self._attributes() == other._attributes())
-
-    def __hash__(self):
-        return hash((type(self), self._attributes()))
-
-    def __str__(self):
-        return '%s{module_stride=%i,partial_sum=%i}' % (
-                self.__class__.__name__,
-                self.module_stride,
-                self.partial_sum,
-                )
 
     def make_node(self, images, hidacts, frows, fcols):
         if self.partial_sum != 1:
@@ -433,3 +437,8 @@ class GpuWeightActs(Base):
 
         return sio.getvalue() % locals()
 
+
+class GpuImgActs(Base):
+    """
+    XXX
+    """

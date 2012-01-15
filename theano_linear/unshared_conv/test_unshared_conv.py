@@ -1,4 +1,4 @@
-
+import sys
 import unittest
 
 import numpy
@@ -14,7 +14,7 @@ from .unshared_conv import ImgActs
 def rand(shp, dtype):
     return numpy.random.rand(*shp).astype(dtype)
 
-def assert_linear(f, pt):
+def assert_linear(f, pt, mode=None):
     t = theano.tensor.scalar(dtype=pt.dtype)
     ptlike = theano.shared(rand(
         pt.get_value(borrow=True).shape,
@@ -25,7 +25,8 @@ def assert_linear(f, pt):
     out4 = f(pt + ptlike)
 
     f = theano.function([t], [out * t, out2, out3, out4],
-            allow_input_downcast=True)
+            allow_input_downcast=True,
+            mode=mode)
     outval, out2val, out3val, out4val = f(3.6)
     assert numpy.allclose(outval, out2val)
     assert numpy.allclose(out3val, out4val)
@@ -38,46 +39,70 @@ class TestFilterActs(unittest.TestCase):
     fshape = (2, 2, 1, 3, 3, 1, 5)
     module_stride = 1
     dtype = 'float64'
+    mode = theano.compile.get_default_mode()
+
+    def function(self, inputs, outputs):
+        return theano.function(inputs, outputs, mode=self.mode)
 
     def setUp(self):
-        self.fa = FilterActs(self.module_stride)
+        self.op = FilterActs(self.module_stride)
         self.s_images = theano.shared(rand(self.ishape, self.dtype))
         self.s_filters = theano.shared(rand(self.fshape, self.dtype))
 
     def test_type(self):
-        out = self.fa(self.s_images, self.s_filters)
+        out = self.op(self.s_images, self.s_filters)
         assert out.dtype == self.dtype
         assert out.ndim == 5
 
-        f = theano.function([], out)
+        f = self.function([], out)
         outval = f()
         assert len(outval.shape) == len(self.ishape)
         assert outval.dtype == self.s_images.get_value(borrow=True).dtype
 
     def test_linearity_images(self):
         assert_linear(
-                lambda imgs: self.fa(imgs, self.s_filters),
-                self.s_images)
+                lambda imgs: self.op(imgs, self.s_filters),
+                self.s_images,
+                mode=self.mode)
 
-    def test_linearity_filterss(self):
+    def test_linearity_filters(self):
         assert_linear(
-                lambda fts: self.fa(self.s_images, fts),
-                self.s_filters)
+                lambda fts: self.op(self.s_images, fts),
+                self.s_filters,
+                mode=self.mode)
 
     def test_shape(self):
-        out = self.fa(self.s_images, self.s_filters)
-        f = theano.function([], out)
+        out = self.op(self.s_images, self.s_filters)
+        f = self.function([], out)
         outval = f()
         assert outval.shape == (self.fshape[-2],
                 self.fshape[-1],
                 self.fshape[0], self.fshape[1],
                 self.ishape[-1])
 
-    def test_grad(self):
+    def test_grad_left(self):
+        # test only the left so that the right can be a shared variable,
+        # and then TestGpuFilterActs can use a gpu-allocated shared var
+        # instead.
+        def left_op(imgs):
+            return self.op(imgs, self.s_filters)
         try:
-            verify_grad(self.fa,
-                    [self.s_images.get_value(),
-                        self.s_filters.get_value()])
+            verify_grad(left_op, [self.s_images.get_value()],
+                    mode=self.mode)
+        except verify_grad.E_grad, e:
+            print e.num_grad.gf
+            print e.analytic_grad
+            raise
+
+    def test_grad_right(self):
+        # test only the right so that the left can be a shared variable,
+        # and then TestGpuFilterActs can use a gpu-allocated shared var
+        # instead.
+        def right_op(filters):
+            return self.op(self.s_images, filters)
+        try:
+            verify_grad(right_op, [self.s_filters.get_value()],
+                    mode=self.mode)
         except verify_grad.E_grad, e:
             print e.num_grad.gf
             print e.analytic_grad
@@ -85,13 +110,19 @@ class TestFilterActs(unittest.TestCase):
 
     def test_dtype_mismatch(self):
         self.assertRaises(TypeError,
-                self.fa,
+                self.op,
                 theano.tensor.cast(self.s_images, 'float32'),
                 theano.tensor.cast(self.s_filters, 'float64'))
         self.assertRaises(TypeError,
-                self.fa,
+                self.op,
                 theano.tensor.cast(self.s_images, 'float64'),
                 theano.tensor.cast(self.s_filters, 'float32'))
+
+    def test_op_eq(self):
+        assert FilterActs(1) == FilterActs(1)
+        assert not (FilterActs(1) != FilterActs(1))
+        assert (FilterActs(2) != FilterActs(1))
+        assert FilterActs(1) != None
 
 
 class TestFilterActsF32(TestFilterActs):
