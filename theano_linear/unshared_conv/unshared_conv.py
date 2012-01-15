@@ -41,39 +41,29 @@ class Base(theano.Op):
                 )
 
 
-class FilterActs(theano.Op):
+class FilterActs(Base):
     """
     Images of shape: colors x 
     Filters are of shape:
         channels
     """
-    def __init__(self,
-            module_stride=1,
-            ):
-        self.module_stride = module_stride
-
-    def _attributes(self):
-        return (
-                self.module_stride,
-                )
-
-    def __eq__(self, other):
-        return (type(self) == type(other)
-                and self._attributes() == other._attributes())
-
-    def __hash__(self):
-        return hash((type(self), self._attributes()))
-
-    def __str__(self):
-        return '%s{module_stride=%i}' % (
-                self.__class__.__name__,
-                self.module_stride,
-                )
 
     def make_node(self, images, filters):
+        images = theano.tensor.as_tensor_variable(images)
+        filters = theano.tensor.as_tensor_variable(filters)
+        ibcast = images.broadcastable
+        fbcast = filters.broadcastable
+        igroups, icolors_per_group, irows, icols, icount = ibcast
+        fmodulesR, fmodulesC, fcolors, frows, fcols = fbcast[:-2]
+        fgroups, filters_per_group = fbcast[-2:]
+        hbcast = (fgroups, filters_per_group, fmodulesR, fmodulesC, icount)
+        htype = theano.tensor.TensorType(
+                dtype=images.dtype,
+                broadcastable=hbcast)
+
         return theano.gof.Apply(self,
                 [images, filters],
-                [images.type()])
+                [htype()])
 
     def perform(self, node, iargs, ostor):
         images, filters = iargs
@@ -84,7 +74,7 @@ class FilterActs(theano.Op):
 
         hshape = self.infer_shape(node, (images.shape, filters.shape))[0]
 
-        target = numpy.zeros(hshape, dtype=images.dtype)
+        hidacts = numpy.zeros(hshape, dtype=images.dtype)
 
         for mR in xrange(fmodulesR):
             for mC in xrange(fmodulesC):
@@ -98,21 +88,27 @@ class FilterActs(theano.Op):
                     rc_filters = filters[mR, mC, :, :, :, gg, :]
                     # rc_images are fcolors x frows x fcols x count
                     # rc_filters are fcolors x frows x fcols x fpg
-                    rc_target = numpy.dot(
+                    rc_hidacts = numpy.dot(
                         rc_filters.reshape(-1, filters_per_group).T,
                         rc_images.reshape(-1, icount))
-                    target[gg, :, mR, mC, :] = rc_target
-        ostor[0][0] = target
+                    hidacts[gg, :, mR, mC, :] = rc_hidacts
+        ostor[0][0] = hidacts
+
+        if 0:
+            print 'FilterActs shapes: images', images.shape
+            print 'FilterActs shapes: filters', filters.shape
+            print 'FilterActs shapes: hidacts', hidacts.shape
 
     def grad(self, inputs, goutputs):
         images, filters = inputs
         frows = filters.shape[3]
         fcols = filters.shape[4]
+        irows = images.shape[2]
+        icols = images.shape[3]
         gimages = ImgActs(module_stride=self.module_stride)(
-                filters, goutputs[0])
-        gfilters = WeightActs(
-                module_stride=self.module_stride,
-                partial_sum=1)(images, goutputs[0], frows, fcols)
+                filters, goutputs[0], irows, icols)
+        gfilters = WeightActs(module_stride=self.module_stride)(
+                images, goutputs[0], frows, fcols)
         return [gimages, gfilters]
 
     def infer_shape(self, node, shapes):
@@ -140,34 +136,12 @@ class FilterActs(theano.Op):
         return [hshape]
 
 
-class WeightActs(theano.Op):
+class WeightActs(Base):
     """
     Images of shape: colors x
     Filters are of shape:
         channels
     """
-    def __init__(self,
-            module_stride=1,
-            ):
-        self.module_stride = module_stride
-
-    def _attributes(self):
-        return (
-                self.module_stride,
-                )
-
-    def __eq__(self, other):
-        return (type(self) == type(other)
-                and self._attributes() == other._attributes())
-
-    def __hash__(self):
-        return hash((type(self), self._attributes()))
-
-    def __str__(self):
-        return '%s{module_stride=%i}' % (
-                self.__class__.__name__,
-                self.module_stride,
-                )
 
     def make_node(self, images, hidacts, frows, fcols):
         images, hidacts, frows, fcols = map(theano.tensor.as_tensor_variable,
@@ -222,7 +196,7 @@ class WeightActs(theano.Op):
         fgroups = hgroups
         filters_per_group = hcolors_per_group
 
-        target = numpy.zeros(
+        filters = numpy.zeros(
                 (fmodulesR, fmodulesC, fcolors, frows, fcols, fgroups,
                     filters_per_group),
                 dtype=images.dtype)
@@ -238,16 +212,16 @@ class WeightActs(theano.Op):
                             :]
                     # rc_images is fcolors x frows x fcols x count
 
-                    rc_target = target[gg, :, mR, mC, :]
-                    # rc_target is fpg x count
+                    rc_hidacts = hidacts[gg, :, mR, mC, :]
+                    # rc_hidacts is fpg x count
 
                     rc_images.reshape(-1, icount)
-                    rc_filters = numpy.dot(rc_images, rc_target.T)
+                    rc_filters = numpy.dot(rc_images, rc_hidacts.T)
 
                     filters[mR, mC, :, :, :, gg, :] = rc_filters.reshape(
                             (fcolors, frows, fcols, filters_per_group))
 
-        ostor[0][0] = target
+        ostor[0][0] = filters
 
 
 class ImgActs(Base):
@@ -285,8 +259,10 @@ class ImgActs(Base):
         icolors_per_group = fcolors
         icount = hcount
 
-        print 'FILTERS SHAPE:', filters.shape
-        print 'HIDACTS SHAPE:', hidacts.shape
+        #print 'IMGACTS: NODE OUTPUTS[0]'
+        #print theano.printing.debugprint(node.outputs[0])
+        #print 'FILTERS SHAPE:', filters.shape
+        #print 'HIDACTS SHAPE:', hidacts.shape
         if hrows != hcols:
             raise NotImplementedError("non-square hidacts argument",
                     (hrows, hcols))

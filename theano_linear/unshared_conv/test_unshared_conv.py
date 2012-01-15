@@ -5,6 +5,7 @@ import numpy
 
 import theano
 from theano.sandbox.cuda.var import float32_shared_constructor
+from theano.tests.unittest_tools import verify_grad
 
 from .unshared_conv import FilterActs
 
@@ -56,6 +57,16 @@ class TestFilterActs(unittest.TestCase):
                 self.fshape[-1],
                 self.fshape[0], self.fshape[1],
                 self.ishape[-1])
+
+    def test_grad(self):
+        try:
+            verify_grad(self.fa,
+                    [self.s_images.get_value(),
+                        self.s_filters.get_value()])
+        except verify_grad.E_grad, e:
+            print e.num_grad.gf
+            print e.analytic_grad
+            raise
 
 
 class TestFilterActsF32(TestFilterActs):
