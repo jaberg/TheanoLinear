@@ -43,7 +43,7 @@ class Base(theano.Op):
 
 class FilterActs(Base):
     """
-    Images of shape: colors x 
+    Images of shape: colors x
     Filters are of shape:
         channels
     """
@@ -60,7 +60,8 @@ class FilterActs(Base):
         htype = theano.tensor.TensorType(
                 dtype=images.dtype,
                 broadcastable=hbcast)
-
+        if images.dtype != filters.dtype:
+            raise TypeError('dtype mismatch', (images, filters))
         return theano.gof.Apply(self,
                 [images, filters],
                 [htype()])
@@ -187,6 +188,9 @@ class WeightActs(Base):
         if frows != fcols:
             raise NotImplementedError("non-square filter shape",
                     (frows, fcols))
+        if igroups != hgroups:
+            raise ValueError("hgroups must match igroups",
+                    igroups, hgroups)
 
         fmodulesR = hrows
         fmodulesC = hcols
@@ -196,10 +200,10 @@ class WeightActs(Base):
         fgroups = hgroups
         filters_per_group = hcolors_per_group
 
-        filters = numpy.zeros(
-                (fmodulesR, fmodulesC, fcolors, frows, fcols, fgroups,
-                    filters_per_group),
-                dtype=images.dtype)
+        fshape = (fmodulesR, fmodulesC, fcolors, frows, fcols, fgroups,
+                    filters_per_group)
+
+        filters = numpy.zeros(fshape, dtype=images.dtype)
 
         for mR in xrange(fmodulesR):
             for mC in xrange(fmodulesC):
@@ -215,9 +219,9 @@ class WeightActs(Base):
                     rc_hidacts = hidacts[gg, :, mR, mC, :]
                     # rc_hidacts is fpg x count
 
-                    rc_images.reshape(-1, icount)
-                    rc_filters = numpy.dot(rc_images, rc_hidacts.T)
-
+                    rc_filters = numpy.dot(
+                            rc_images.reshape(-1, icount),
+                            rc_hidacts.T)
                     filters[mR, mC, :, :, :, gg, :] = rc_filters.reshape(
                             (fcolors, frows, fcols, filters_per_group))
 
