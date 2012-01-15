@@ -15,6 +15,9 @@ def any_symbolic(*args):
             return True
     return False
 
+def not_symbolic(*args):
+    return not any_symbolic(*args)
+
 
 class Base(theano.Op):
     def __init__(self,
@@ -173,41 +176,24 @@ class WeightActs(Base):
     def perform(self, node, iargs, ostor):
         images, hidacts, frows, fcols = iargs
 
-        igroups, icolors_per_group, irows, icols, icount = images.shape
-        hgroups, hcolors_per_group, hrows, hcols, hcount = hidacts.shape
-
-        if irows != icols:
-            raise NotImplementedError("non-square image argument",
-                    (irows, icols))
-        if hrows != hcols:
-            raise NotImplementedError("non-square filter shape",
-                    (frows, fcols))
-        if icount != hcount:
-            raise NotImplementedError("non-square filter shape",
-                    (icount, hcount))
         if frows != fcols:
+            # this could be implemented, but GPU case doesn't do it
             raise NotImplementedError("non-square filter shape",
                     (frows, fcols))
-        if igroups != hgroups:
-            raise ValueError("hgroups must match igroups",
-                    igroups, hgroups)
 
-        fmodulesR = hrows
-        fmodulesC = hcols
-        fcolors = icolors_per_group
-        # frows already assigned
-        # fcols already assigned
-        fgroups = hgroups
-        filters_per_group = hcolors_per_group
-
-        fshape = (fmodulesR, fmodulesC, fcolors, frows, fcols, fgroups,
-                    filters_per_group)
+        #igroups, icolors_per_group, irows, icols, icount = images.shape
+        hgroups, hcolors_per_group, hrows, hcols, hcount = hidacts.shape
+        fshape = list(self.infer_shape(node,
+                (images.shape, hidacts.shape, (), ()))[0])
+        fcolors = fshape[2]
+        fshape[3] = frows
+        fshape[4] = fcols
 
         filters = numpy.zeros(fshape, dtype=images.dtype)
 
-        for mR in xrange(fmodulesR):
-            for mC in xrange(fmodulesC):
-                for gg in xrange(igroups):
+        for mR in xrange(hrows):
+            for mC in xrange(hcols):
+                for gg in xrange(hgroups):
                     img_r_offset = mR * self.module_stride
                     img_c_offset = mC * self.module_stride
                     rc_images = images[gg, :,
@@ -220,12 +206,54 @@ class WeightActs(Base):
                     # rc_hidacts is fpg x count
 
                     rc_filters = numpy.dot(
-                            rc_images.reshape(-1, icount),
+                            rc_images.reshape(-1, hcount),
                             rc_hidacts.T)
                     filters[mR, mC, :, :, :, gg, :] = rc_filters.reshape(
-                            (fcolors, frows, fcols, filters_per_group))
-
+                            (fcolors, frows, fcols, hcolors_per_group))
         ostor[0][0] = filters
+
+    def grad(self, inputs, goutputs):
+        images, hidacts, frows, fcols = inputs
+        gfilters, = goutputs
+        irows = images.shape[2]
+        icols = images.shape[3]
+        gimages = ImgActs(module_stride=self.module_stride)(
+                gfilters, hidacts, irows, icols)
+        ghidacts = FilterActs(module_stride=self.module_stride)(
+                images, gfilters)
+        return [gimages, ghidacts, None, None]
+
+    def infer_shape(self, node, shapes):
+        images, hidacts, frows, fcols = node.inputs
+        ishape, hshape, frowshp, fcolshp = shapes
+        igroups, icolors_per_group, irows, icols, icount = ishape
+        hgroups, hcolors_per_group, hrows, hcols, hcount = hshape
+
+        fmodulesR = hrows
+        fmodulesC = hcols
+        fcolors = icolors_per_group
+        # frows already assigned
+        # fcols already assigned
+        fgroups = hgroups
+        filters_per_group = hcolors_per_group
+
+        fshape = (fmodulesR, fmodulesC, fcolors, frows, fcols, fgroups,
+                    filters_per_group)
+
+        if not_symbolic(irows, icols) and irows != icols:
+            raise NotImplementedError("non-square image argument",
+                    (irows, icols))
+        if not_symbolic(hrows, hcols) and hrows != hcols:
+            raise NotImplementedError("non-square filter shape",
+                    (hrows, hcols))
+        if not_symbolic(icount, hcount) and icount != hcount:
+            raise NotImplementedError("different number of images",
+                    (icount, hcount))
+        if not_symbolic(igroups, hgroups) and igroups != hgroups:
+            raise ValueError("hgroups must match igroups",
+                    igroups, hgroups)
+
+        return [fshape]
 
 
 class ImgActs(Base):
@@ -247,6 +275,9 @@ class ImgActs(Base):
             raise TypeError('filters must be 7d tensor', filters)
         if hidacts.ndim != 5:
             raise TypeError('hidacts must be 5d tensor', filters)
+        if filters.dtype != hidacts.dtype:
+            raise TypeError('filters and hidacts must have matching dtype',
+                    (filters, hidacts))
         return theano.gof.Apply(self,
                 [filters, hidacts, irows, icols],
                 [hidacts.type()])
@@ -309,14 +340,14 @@ class ImgActs(Base):
         ostor[0][0] = images
 
     def grad(self, inputs, goutputs):
-        images, filters = inputs
+        filters, hidacts, irows, icols = inputs
+        gimages, = goutputs
         frows = filters.shape[3]
         fcols = filters.shape[4]
-        gimages = ImgActs(module_stride=self.module_stride)(
-                filters, goutputs[0])
-        gfilters = WeightActs(
-                module_stride=self.module_stride,
-                partial_sum=1)(images, goutputs[0], frows, fcols)
-        return [gimages, gfilters]
+        gfilters = WeightActs(module_stride=self.module_stride)(
+                gimages, hidacts, frows, fcols)
+        ghidacts = FilterActs(module_stride=self.module_stride)(
+                gimages, filters)
+        return [gfilters, ghidacts, None, None]
 
 

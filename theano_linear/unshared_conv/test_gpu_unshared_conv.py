@@ -34,6 +34,7 @@ class TestGpuFilterActs(unittest.TestCase):
 
     def test_shape(self):
         gpuout = self.gfa(self.gpu_images, self.gpu_filters)
+        assert 'Cuda' in str(self.gpu_filters.type)
         f = theano.function([], gpuout)
         outval = f()
         assert outval.shape == (

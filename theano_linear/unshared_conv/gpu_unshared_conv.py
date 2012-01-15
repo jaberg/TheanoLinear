@@ -3,6 +3,7 @@ import os
 import StringIO
 
 import theano
+from theano.sandbox.cuda import CudaNdarrayType
 
 from .unshared_conv import FilterActs
 from .unshared_conv import WeightActs
@@ -10,11 +11,54 @@ from .unshared_conv import ImgActs
 
 _this_dir = os.path.dirname(inspect.getfile(inspect.currentframe()))
 
-class GpuFilterActs(FilterActs):
+
+class Base(theano.Op):
+    def __init__(self,
+            module_stride=1,
+            partial_sum=1,
+            ):
+        self.module_stride = module_stride
+        self.partial_sum = partial_sum
+
+    def _attributes(self):
+        return (
+                self.module_stride,
+                self.partial_sum,
+                )
+
+    def __eq__(self, other):
+        return (type(self) == type(other)
+                and self._attributes() == other._attributes())
+
+    def __hash__(self):
+        return hash((type(self), self._attributes()))
+
+    def __str__(self):
+        return '%s{module_stride=%i,partial_sum=%i}' % (
+                self.__class__.__name__,
+                self.module_stride,
+                self.partial_sum,
+                )
+
+
+class GpuFilterActs(Base):
     """
     XXX
 
     """
+
+    def make_node(self, images, filters):
+        ibcast = images.broadcastable
+        fbcast = filters.broadcastable
+        igroups, icolors_per_group, irows, icols, icount = ibcast
+        fmodulesR, fmodulesC, fcolors, frows, fcols = fbcast[:-2]
+        fgroups, filters_per_group = fbcast[-2:]
+        hbcast = (fgroups, filters_per_group, fmodulesR, fmodulesC, icount)
+        htype = CudaNdarrayType(broadcastable=hbcast)
+        return theano.gof.Apply(self,
+                [images, filters],
+                [htype()])
+
     def c_support_code(self):
         cufile = open(os.path.join(_this_dir, 'filter_acts.cu'))
         return cufile.read()
@@ -166,7 +210,7 @@ class GpuFilterActs(FilterActs):
         return [gimages, gfilters]
 
 
-class GpuWeightActs(theano.Op):
+class GpuWeightActs(Base):
     """
     XXX
     """

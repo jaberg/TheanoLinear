@@ -132,3 +132,90 @@ class TestWeightActs(unittest.TestCase):
         def f(hidacts):
             return self.op(self.s_images, hidacts, self.frows, self.fcols)
         assert_linear(f, self.s_hidacts)
+
+    def test_grad(self):
+        def op2(imgs, hids):
+            return self.op(imgs, hids, self.frows, self.fcols)
+        try:
+            verify_grad(op2,
+                    [self.s_images.get_value(),
+                        self.s_hidacts.get_value()])
+        except verify_grad.E_grad, e:
+            print e.num_grad.gf
+            print e.analytic_grad
+            raise
+
+    def test_dtype_mismatch(self):
+        self.assertRaises(TypeError,
+                self.op,
+                theano.tensor.cast(self.s_images, 'float32'),
+                theano.tensor.cast(self.s_hidacts, 'float64'),
+                self.frows, self.fcols)
+        self.assertRaises(TypeError,
+                self.op,
+                theano.tensor.cast(self.s_images, 'float64'),
+                theano.tensor.cast(self.s_hidacts, 'float32'),
+                self.frows, self.fcols)
+
+
+class TestImgActs(unittest.TestCase):
+    # 1 5x5 6-channel image (2 groups of 3 channels)
+    ishape = (6, 3, 5, 5, 2)
+    hshape = (6, 4, 3, 3, 2)
+    fshape = (3, 3, 3, 2, 2, 6, 4)
+    module_stride = 1
+    dtype = 'float64'
+
+    #frows = property(lambda s: s.fshape[3])
+    #fcols = property(lambda s: s.fshape[4])
+    irows = property(lambda s: s.ishape[2])
+    icols = property(lambda s: s.ishape[3])
+
+    def setUp(self):
+        self.op = ImgActs(module_stride=self.module_stride)
+        self.s_filters = theano.shared(rand(self.fshape, self.dtype))
+        self.s_hidacts = theano.shared(rand(self.hshape, self.dtype))
+
+    def test_type(self):
+        out = self.op(self.s_filters, self.s_hidacts, self.irows, self.icols)
+        assert out.dtype == self.dtype
+        assert out.ndim == 5
+        f = theano.function([], out)
+        outval = f()
+        assert outval.shape == self.ishape
+        assert outval.dtype == self.dtype
+
+    def test_linearity_filters(self):
+        def f(filts):
+            return self.op(filts, self.s_hidacts, self.irows, self.icols)
+        assert_linear(f, self.s_filters)
+
+    def test_linearity_hidacts(self):
+        def f(hidacts):
+            return self.op(self.s_filters, hidacts, self.irows, self.icols)
+        assert_linear(f, self.s_hidacts)
+
+    def test_grad(self):
+        def op2(imgs, hids):
+            return self.op(imgs, hids, self.irows, self.icols)
+        try:
+            verify_grad(op2,
+                    [self.s_filters.get_value(),
+                        self.s_hidacts.get_value()])
+        except verify_grad.E_grad, e:
+            print e.num_grad.gf
+            print e.analytic_grad
+            raise
+
+    def test_dtype_mismatch(self):
+        self.assertRaises(TypeError,
+                self.op,
+                theano.tensor.cast(self.s_filters, 'float32'),
+                theano.tensor.cast(self.s_hidacts, 'float64'),
+                self.irows, self.icols)
+        self.assertRaises(TypeError,
+                self.op,
+                theano.tensor.cast(self.s_filters, 'float64'),
+                theano.tensor.cast(self.s_hidacts, 'float32'),
+                self.irows, self.icols)
+
