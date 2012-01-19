@@ -5,5 +5,6 @@ from linear import (
         TransposeTransform,
         #Concat,     ## unready
         #Sum,        ## unready
-        #MatrixMul,  ## unready
         )
+from matrixmul import MatrixMul
+from conv2d import Conv2d

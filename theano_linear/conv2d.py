@@ -1,8 +1,9 @@
 from theano.tensor.nnet.conv import conv2d, ConvOp
 
-# XXX: split following into a separate
+from .imaging import tile_slices_to_image, most_square_shape
+from .linear import LinearTransform
 
-def tile_conv_weights(w,flip=False, scale_each=False):
+def tile_conv_weights(w, flip=False, scale_each=False):
     """
     Return something that can be rendered as an image to visualize the filters.
     """
@@ -13,7 +14,7 @@ def tile_conv_weights(w,flip=False, scale_each=False):
     wmin, wmax = w.min(), w.max()
     if not scale_each:
         w = numpy.asarray(255 * (w - wmin) / (wmax - wmin + 1e-6), dtype='uint8')
-    trows, tcols= pylearn.io.image_tiling.most_square_shape(w.shape[0])
+    trows, tcols= most_square_shape(w.shape[0])
     outrows = trows * w.shape[2] + trows-1
     outcols = tcols * w.shape[3] + tcols-1
     out = numpy.zeros((outrows, outcols,3), dtype='uint8')
@@ -35,14 +36,14 @@ def tile_conv_weights(w,flip=False, scale_each=False):
     return out
 
 
-class LConv(LinearTransform):
+class Conv2d(LinearTransform):
     """
     XXX
     """
 
     def __init__(self, filters, img_shape, subsample=(1,1), border_mode='valid',
             filters_shape=None, message=""):
-        super(LConv, self).__init__([filters])
+        super(Conv2d, self).__init__([filters])
         self._filters = filters
         if filters_shape is None:
             self._filters_shape = tuple(filters.get_value().shape)
@@ -60,30 +61,32 @@ class LConv(LinearTransform):
         if not len(self._filters_shape)==4:
             raise TypeError('need 4-tuple shape', self._filters_shape)
 
-    def _lmul(self, x, T):
-        if T:
-            dummy_v = tensor.tensor4()
-            z_hs = conv2d(dummy_v, self._filters,
-                    image_shape=self._img_shape,
-                    filter_shape=self._filters_shape,
-                    subsample=self._subsample,
-                    border_mode=self._border_mode,
-                    )
-            xfilters, xdummy = z_hs.owner.op.grad((dummy_v, self._filters), (x,))
-            return xfilters
-        else:
-            return conv2d(
-                    x, self._filters,
-                    image_shape=self._img_shape,
-                    filter_shape=self._filters_shape,
-                    subsample=self._subsample,
-                    border_mode=self._border_mode,
-                    )
+    def lmul(self, x):
+        # dot(x, A)
+        return conv2d(
+                x, self._filters,
+                image_shape=self._img_shape,
+                filter_shape=self._filters_shape,
+                subsample=self._subsample,
+                border_mode=self._border_mode,
+                )
 
-    def _row_shape(self):
+    def lmul_T(self, x):
+        # dot(x, A.T)
+        dummy_v = tensor.tensor4()
+        z_hs = conv2d(dummy_v, self._filters,
+                image_shape=self._img_shape,
+                filter_shape=self._filters_shape,
+                subsample=self._subsample,
+                border_mode=self._border_mode,
+                )
+        xfilters, xdummy = z_hs.owner.op.grad((dummy_v, self._filters), (x,))
+        return xfilters
+
+    def row_shape(self):
         return self._img_shape[1:]
 
-    def _col_shape(self):
+    def col_shape(self):
         rows_cols = ConvOp.getOutputShape(
                 self._img_shape[2:],
                 self._filters_shape[2:],
@@ -92,8 +95,8 @@ class LConv(LinearTransform):
         rval = (self._filters_shape[0],)+tuple(rows_cols)
         return rval
 
-    def _tile_columns(self, scale_each=True, **kwargs):
-        return pylearn.io.image_tiling.tile_slices_to_image(
+    def tile_columns(self, scale_each=True, **kwargs):
+        return tile_slices_to_image(
                 self._filters.get_value()[:,:,::-1,::-1].transpose(0,2,3,1),
                 scale_each=scale_each,
                 **kwargs)
@@ -101,5 +104,5 @@ class LConv(LinearTransform):
     def print_status(self):
         print ndarray_status(
                 self._filters.get_value(borrow=True),
-                msg='LConv{%s}'%self._message)
+                msg='Conv2d{%s}'%self._message)
 
