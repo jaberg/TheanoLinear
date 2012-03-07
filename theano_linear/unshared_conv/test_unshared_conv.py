@@ -250,3 +250,4 @@ class TestImgActs(unittest.TestCase):
                 theano.tensor.cast(self.s_hidacts, 'float32'),
                 self.irows, self.icols)
 
+

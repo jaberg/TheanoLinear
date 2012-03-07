@@ -1,9 +1,12 @@
 import unittest
 
+import nose
+import nose.plugins.attrib
 import numpy
 
 import theano
 from theano.sandbox.cuda.var import float32_shared_constructor
+from theano.sandbox.cuda import gpu_from_host
 
 from .unshared_conv import FilterActs
 from .unshared_conv import WeightActs
@@ -16,6 +19,9 @@ from .gpu_unshared_conv import (
         )
 
 import test_unshared_conv
+
+def rand(shp, dtype):
+    return numpy.random.rand(*shp).astype(dtype)
 
 class TestGpuFilterActs(test_unshared_conv.TestFilterActs):
     """
@@ -64,6 +70,7 @@ class TestGpuFilterActs(test_unshared_conv.TestFilterActs):
         assert (GpuFilterActs(1, 2) != GpuFilterActs(1, 1))
         assert (GpuFilterActs(2, 1) != GpuFilterActs(1, 1))
         assert GpuFilterActs(2, 1) != None
+
 
 class TestGpuWeightActs(unittest.TestCase):
     """
@@ -181,4 +188,63 @@ if 0:
         print images
         print cpuval[:, :, 1, 1, :]
         print gpuval[:, :, 1, 1, :]
+
+
+@nose.plugins.attrib.attr('slow')
+def test_fuzz_conv_GpuFilterActs(dtype='float32'):
+    ishape = (2, 4, 4, 3)
+    fshape = (5, 2, 2, 3)
+
+    s_imgs = theano.shared(rand(ishape, dtype))
+    s_filters = theano.shared(rand(fshape, dtype))
+    sf_imgs = theano.shared(rand((2, 2, 2, 2, 2), dtype))
+    sf_filters = theano.shared(rand((1, 1, 2, 2, 2, 2, 2), dtype))
+    s_out_c = theano.shared(rand(ishape, dtype))
+    s_out_f = theano.shared(rand((2, 2, 2, 2, 2), dtype))
+
+    rng = numpy.random.RandomState(234)
+
+    for i in range(10):
+        n_imgs = rng.randint(16) + 1
+        channels = rng.randint(256) + 1
+        rows = rng.randint(512) + 1
+        cols = rows
+        frows = rng.randint(17) + 1
+        fcols = frows
+        n_filters = rng.randint(256) + 16
+        n_filters -= n_filters % 16
+
+        c_imgs = rand((n_imgs, channels, rows, cols), dtype=dtype)
+        c_filters = rand((n_filters, channels, frows, fcols), dtype=dtype)
+
+        print 'SHAPES', c_imgs.shape, c_filters.shape
+
+        s_imgs.set_value(c_imgs)
+        s_filters.set_value(c_filters)
+        sf_imgs.set_value(c_imgs.transpose(1, 2, 3, 0)[None,:,:,:,:])
+        sf_filters.set_value(c_filters.transpose(1, 2, 3, 0)[None, None,:,:,:,None,:])
+
+        conv_op = theano.tensor.nnet.conv.ConvOp(
+                imshp=(channels, rows, cols),
+                kshp=(frows, fcols),
+                bsize=n_imgs,
+                nkern=n_filters)
+
+        def fa_op(ii, ff):
+            op = GpuFilterActs(module_stride=1, partial_sum=1, conv=True)
+            return op(ii, ff)# gpu_from_host(ii), gpu_from_host(ff))
+
+        f = theano.function([], [], updates={
+            s_out_c: conv_op(s_imgs, s_filters),
+            s_out_f: fa_op(sf_imgs, sf_filters),
+            })
+        f()
+        out_c = s_out_c.get_value()
+        out_f = s_out_f.get_value()
+        print out_c.shape
+        print out_c.mean()
+        print out_f.shape
+        print out_f.mean()
+        assert out_c.shape == out_f.shape
+        assert numpy.allclose(out_c, out_f)
 

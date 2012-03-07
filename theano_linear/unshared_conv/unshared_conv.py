@@ -8,7 +8,7 @@ import StringIO
 
 def any_symbolic(*args):
     """
-    Return True iff any a in `args` is a theano Variable
+    Return True iff any `a` in `args` is a theano Variable
     """
     for a in args:
         if isinstance(a, theano.Variable):
@@ -63,6 +63,7 @@ class FilterActs(Base):
         htype = theano.tensor.TensorType(
                 dtype=images.dtype,
                 broadcastable=hbcast)
+        print hbcast
         if images.dtype != filters.dtype:
             raise TypeError('dtype mismatch', (images, filters))
         return theano.gof.Apply(self,

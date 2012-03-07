@@ -66,6 +66,13 @@ class GpuFilterActs(Base):
     XXX
 
     """
+    def __init__(self,
+            module_stride,
+            partial_sum,
+            conv=False, # XXX dont be default param
+            ):
+        Base.__init__(self, module_stride, partial_sum)
+        self.conv = conv
 
     def make_node(self, images, filters):
         ibcast = images.broadcastable
@@ -101,6 +108,7 @@ class GpuFilterActs(Base):
         fail = sub['fail']
         moduleStride = str(self.module_stride)
         sio = StringIO.StringIO()
+        conv = int(self.conv)
 
         print >> sio, """
 
@@ -157,7 +165,7 @@ class GpuFilterActs(Base):
             int imgStride = icount;
             float scaleTargets = 0.0;
             float scaleOutput = 1.0;
-            bool conv = false;
+            bool conv = %(conv)s;
 
             if (igroups != fgroups)
             {
@@ -182,8 +190,8 @@ class GpuFilterActs(Base):
                 int dims[5];
                 dims[0] = fgroups;
                 dims[1] = filters_per_group;
-                dims[2] = fmodulesR;
-                dims[3] = fmodulesC;
+                dims[2] = conv ? irows - frows + 1: fmodulesR;
+                dims[3] = conv ? icols - fcols + 1: fmodulesC;
                 dims[4] = icount;
                 %(responses)s = (CudaNdarray*)CudaNdarray_NewDims(5, dims);
                 if (!%(responses)s)
@@ -200,8 +208,12 @@ class GpuFilterActs(Base):
                     irows,
                     icols,
                     icount,
-                    fmodulesR,
-                    fmodulesC,
+                    //fmodulesR,
+                    //fmodulesC,
+                    //conv ? irows - frows + 1: fmodulesR,
+                    //conv ? icols - fcols + 1: fmodulesC,
+                    conv ? irows - frows + 1: fmodulesR,
+                    conv ? icols - fcols + 1: fmodulesC,
                     frows,
                     fcols,
                     filters_per_group,

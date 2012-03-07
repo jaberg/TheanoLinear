@@ -418,6 +418,13 @@ int _filterActs(
 
     dim3 blocks = numFiltersPerGroup % 32 == 0 ? dim3(DIVUP(numImages, 32 * 4), (numModules * numFilters) / (4 * 8))
                                                : dim3(DIVUP(numImages, 32 * 4), (numModules * numFilters) / (4 * 4));
+    fprintf(stderr, "numImages %i numModules %i numFilters%i\n", numImages,
+            numModules, numFilters);
+    fprintf(stderr, "BLOCKS %i %i %i\n", blocks.x, blocks.y, blocks.z);
+    assert (blocks.x < (1 << 16));  // XXX: read this limit from CUDA
+    assert (blocks.y < (1 << 16));
+    assert (blocks.x > 0);
+    assert (blocks.y > 0);
     dim3 threads(32, 4);
     bool checkImgBounds = numImages % 128 != 0;
 
