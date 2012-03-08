@@ -101,23 +101,53 @@ class GCG_FBCorr(theano.Op):
         fb_ = Filterbank(*self.ker_shp)
         out_ = Output(*self.out_shp)
 
+        if isinstance(out_var.type, theano.tensor.TensorType):
+            pass
+        else:
+            cnda_zeros = theano.sandbox.cuda.CudaNdarray.zeros
+
+            # pad_ival has to be arranged in rgb images
+            # 
+            pad_ival = cnda_zeros((1,) + in_._padded_shape)
+            pad_oval = cnda_zeros((1,) + out_._padded_shape)
+
+            in_._garr_l = [ pad_ival[0, :, :, i * 4: i * 4 + 4]
+                    for i, gp in enumerate(in_._garr_l)]
+
+            for gp in in_._garr_l:
+                print gp.shape
+                print dir(gp)
+
+            out_._garr_l = [pad_oval[0, :, :, i * 4: i * 4 + 4]
+                    for i, gp in enumerate(out_._garr_l)]
+
         fop = FilterOp(in_, fb_, out_, ctxt=self.context, **self.fop_kwargs)
 
         def thunk():
             ival = img_cell[0]
             fval = filter_cell[0]
-            # TODO: slice input image into 4s
-            #       rather than copy it to memory and back
-            in_[:] = np.asarray(ival[0])
             fb_[:] = np.asarray(fval)
-            out_[:] = 0
-            fop()
-            outval = out_[:][None, :, :, :]
             if isinstance(out_var.type, theano.tensor.TensorType):
-                out_cell[0] = outval
-                print out_cell[0].shape, out_cell[0].sum()
+                in_[:] = np.asarray(ival[0])
+                out_[:] = 0
             else:
-                out_cell[0] = theano.sandbox.cuda.CudaNdarray(outval)
+
+                pad_ival[:, :ival.shape[1], :ival.shape[2], :] = ival
+                pad_oval[:] = 0
+
+                assert np.allclose(
+                    pad_ival[:, :ival.shape[1], :ival.shape[2], :],
+                    ival)
+
+            fop()
+
+            if isinstance(out_var.type, theano.tensor.TensorType):
+                outval = out_[:][None, :, :, :]
+                out_cell[0] = outval
+                #print out_cell[0].shape, out_cell[0].sum()
+            else:
+                assert pad_oval.shape[3] == self.out_shp[2]
+                out_cell[0] = pad_oval[:, :self.out_shp[0], :self.out_shp[1], :]
             compute_map[out_var][0] = 1
 
         thunk.inputs = [storage_map[n] for n in node.inputs]
@@ -132,9 +162,11 @@ def rand(shp, dtype):
 
 
 @with_cuda_context
-def test_match_theano(context, dtype='float32', n_imgs=1, rows=3, cols=3, frows=2,
-        fcols=2,
-        channels=1, n_filters=4):
+def test_match_theano(context, dtype='float32', n_imgs=1, rows=4, frows=2,
+        channels=8, n_filters=4):
+
+    cols = rows
+    fcols = frows
 
     print 'IMAGES SHAPE', n_imgs, rows, cols, channels
     print 'FILTERS SHAPE', n_filters, frows, fcols, channels
