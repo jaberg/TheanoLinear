@@ -1,6 +1,8 @@
 import logging
 logger = logging.getLogger(__name__)
 import copy
+import time
+
 import nose
 import nose.plugins.attrib
 import numpy as np
@@ -76,12 +78,8 @@ class GCG_FBCorr(theano.Op):
         return theano.Apply(self, [image, filters], [image.type()])
 
     def __call__(self, image, filters):
-        if 0:
-            contig_image = gpu_contiguous(image)
-            contig_filters = gpu_contiguous(filters)
-        else:
-            contig_image = image
-            contig_filters = filters
+        contig_image = image
+        contig_filters = filters
         return self.make_node(contig_image, contig_filters).outputs[0]
 
 
@@ -102,53 +100,64 @@ class GCG_FBCorr(theano.Op):
         out_ = Output(*self.out_shp)
 
         if isinstance(out_var.type, theano.tensor.TensorType):
-            pass
+            fop = FilterOp(in_, fb_, out_, ctxt=self.context, **self.fop_kwargs)
+
+            def thunk():
+                ival = img_cell[0]
+                fval = filter_cell[0]
+                fb_[:] = np.asarray(fval)
+                in_[:] = np.asarray(ival[0])
+                out_[:] = 0
+                fop()
+                outval = out_[:][None, :, :, :]
+                out_cell[0] = outval
+                compute_map[out_var][0] = 1
         else:
             cnda_zeros = theano.sandbox.cuda.CudaNdarray.zeros
 
-            # pad_ival has to be arranged in rgb images
-            # 
-            pad_ival = cnda_zeros((1,) + in_._padded_shape)
-            pad_oval = cnda_zeros((1,) + out_._padded_shape)
+            # pad_ival has to be arranged in rgba images
+            pad_ival = cnda_zeros((
+                    len(in_._garr_l),
+                    # XXX: HOW MUCH PADDING IS NECESSARY HERE
+                    in_._padded_shape[0]+ 32,
+                    in_._padded_shape[1]+ 32,
+                    min(in_._padded_shape[2], 4)
+                    ))
+            pad_oval = cnda_zeros(
+                    (len(out_._garr_l),)
+                    + out_._padded_shape[:2]
+                    + (min(out_._padded_shape[2], 4),))
 
-            in_._garr_l = [ pad_ival[0, :, :, i * 4: i * 4 + 4]
-                    for i, gp in enumerate(in_._garr_l)]
+            oval = cnda_zeros((1,) + self.out_shp)
 
-            for gp in in_._garr_l:
-                print gp.shape
-                print dir(gp)
+            in_garr_l = [pad_ival[i] for i in range(pad_ival.shape[0])]
+            out_garr_l = [pad_oval[i] for i in range(pad_oval.shape[0])]
 
-            out_._garr_l = [pad_oval[0, :, :, i * 4: i * 4 + 4]
-                    for i, gp in enumerate(out_._garr_l)]
+            in_._garr_l = [pad_ival[i] for i in range(pad_ival.shape[0])]
+            out_._garr_l = [pad_oval[i] for i in range(pad_oval.shape[0])]
 
-        fop = FilterOp(in_, fb_, out_, ctxt=self.context, **self.fop_kwargs)
+            print 'Calling FilterOp'
+            fop = FilterOp(in_, fb_, out_, ctxt=self.context, **self.fop_kwargs)
+            print 'Done FilterOp call'
 
-        def thunk():
-            ival = img_cell[0]
-            fval = filter_cell[0]
-            fb_[:] = np.asarray(fval)
-            if isinstance(out_var.type, theano.tensor.TensorType):
-                in_[:] = np.asarray(ival[0])
-                out_[:] = 0
-            else:
-
-                pad_ival[:, :ival.shape[1], :ival.shape[2], :] = ival
+            def thunk():
+                t0 = time.time()
+                ival = img_cell[0]
+                fval = filter_cell[0]
+                fb_[:] = np.asarray(fval)
+                for i, rgba in enumerate(in_._garr_l):
+                    rgba[:ival.shape[1], :ival.shape[2], :] \
+                            = ival[0, :, :, i * 4: i * 4 + 4]
                 pad_oval[:] = 0
+                ft = fop()
 
-                assert np.allclose(
-                    pad_ival[:, :ival.shape[1], :ival.shape[2], :],
-                    ival)
+                for i, rgba in enumerate(out_._garr_l):
+                    oval[0, :, :, i * 4: i * 4 + 4] \
+                        = rgba[:oval.shape[1], :oval.shape[2], :]
 
-            fop()
-
-            if isinstance(out_var.type, theano.tensor.TensorType):
-                outval = out_[:][None, :, :, :]
-                out_cell[0] = outval
-                #print out_cell[0].shape, out_cell[0].sum()
-            else:
-                assert pad_oval.shape[3] == self.out_shp[2]
-                out_cell[0] = pad_oval[:, :self.out_shp[0], :self.out_shp[1], :]
-            compute_map[out_var][0] = 1
+                out_cell[0] = oval
+                compute_map[out_var][0] = 1
+                print 'thunk time: ', time.time() - t0, ft
 
         thunk.inputs = [storage_map[n] for n in node.inputs]
         thunk.outputs = [storage_map[n] for n in node.outputs]
@@ -207,34 +216,47 @@ def test_match_theano(context, dtype='float32', n_imgs=1, rows=4, frows=2,
             nkern=n_filters)
 
     B_op = GCG_FBCorr(B_ishp, B_kshp,
+            # texture binding doesn't work with CudaNdarray elements in g_arr_l
             use_tex1dfetch=False,
             context=context)
 
+    print 'COMPILING'
     f = theano.function([], [], updates={
         A_out: A_op(A_imgs, A_filters),
         B_out: B_op(B_imgs, B_filters),
         })
+    print 'COMPILING DONE, RUNNING'
     f()
+    f()
+    f()
+    print 'RUNNING DONE, CHECKING'
     # put things into Channel-major format
     Aval = A_out.get_value()
     Bval = B_out.get_value().transpose(0, 3, 1, 2)
-    sanity = np.dot(
-            ival[0,:,:frows,:fcols].flatten(),
-            fval[0,:,::-1,::-1].flatten())
-    print 'SANITY', ival[0,0,0,0]
-    print sanity
-    print Aval[0,0,0,0]
-    print Bval[0,0,0,0]
+    if 0:
+        sanity = np.dot(
+                ival[0,:,:frows,:fcols].flatten(),
+                fval[0,:,::-1,::-1].flatten())
+        print 'SANITY', ival[0,0,0,0]
+        print sanity
+        print Aval[0,0,0,0]
+        print Bval[0,0,0,0]
     print 'max abs diff', abs(Aval - Bval).max()
     print 'fraction correct', (abs(Aval - Bval) < 0.001).sum(), '/', Aval.size
     assert Aval.shape == Bval.shape
     assert np.allclose(Aval, Bval)
 
 
+def test_big1():
+    test_match_theano(n_imgs=1, rows=88, frows=7, channels=80, n_filters=192)
+
+def test_big2():
+    test_match_theano(n_imgs=1, rows=39, frows=9, channels=192, n_filters=256)
+
 @nose.plugins.attrib.attr('slow')
 def test_fuzz(dtype='float32'):
 
-    rng = np.random.RandomState(234)
+    rng = np.random.RandomState(2345)
 
     for i in range(2):
         # XXX add support for this to GCG_FBCorr
@@ -254,6 +276,6 @@ def test_fuzz(dtype='float32'):
         n_filters = rng.randint(32) + 4
         n_filters -= n_filters % 4
 
-        test_match_theano(n_imgs=n_imgs, rows=rows, cols=cols, frows=frows,
-                fcols=fcols, channels=channels, n_filters=n_filters)
+        test_match_theano(n_imgs=n_imgs, rows=rows, frows=frows,
+                channels=channels, n_filters=n_filters)
 

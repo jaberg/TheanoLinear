@@ -15,14 +15,19 @@ from pycuda import driver, gpuarray, compiler, tools
 
 #import os
 from os import path
+MYPATH = path.dirname(path.realpath(__file__))
 
 from Cheetah.Template import Template
-
-from fbconv3_utils import InvalidConfig, MYPATH
 
 # -----------------------------------------------------------------------------
 PADFACTOR_H = 16
 PADFACTOR_W = 16
+
+
+class InvalidConfig(Exception):
+    def __init__(self, err, func=None, args=None):
+        Exception.__init__(self, err, (func, args))
+
 
 
 # =============================================================================
@@ -177,6 +182,7 @@ class FilterOp(object):
 
         # -- compile source
         try:
+            print 'Compiling outstr of len', len(outstr)
             cubin_str = compiler.compile(outstr, options=opt_l)
         except driver.CompileError, err:
             # XXX: better handling of known errors
@@ -290,9 +296,10 @@ class FilterOp(object):
 
         start.record()
         try:
-            [func(*args) for func, args in self._cudafunc_call_l]
+            for func, args in self._cudafunc_call_l:
+                func(*args)
         except driver.LaunchError, err:
-            raise InvalidConfig(err)
+            raise InvalidConfig(err, func, args)
 
         # XXX: timing here?
         end.record()
