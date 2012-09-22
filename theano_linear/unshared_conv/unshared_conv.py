@@ -116,10 +116,17 @@ class FilterActs(Base):
         fcols = filters.shape[4]
         irows = images.shape[2]
         icols = images.shape[3]
+        hidacts = goutputs[0]
+        # filters and hidacts must have same dtype, upcast if needed
+        if filters.dtype == 'float32' and hidacts.dtype == 'float64':
+            filters = theano.tensor.cast(filters, 'float64')
         gimages = ImgActs(module_stride=self.module_stride)(
-                filters, goutputs[0], irows, icols)
+                filters, hidacts, irows, icols)
+        # images and hidacts must have same dtype, upcast if needed
+        if images.dtype == 'float32' and hidacts.dtype == 'float64':
+            images = theano.tensor.cast(images, 'float64')
         gfilters = WeightActs(module_stride=self.module_stride)(
-                images, goutputs[0], frows, fcols)
+                images, hidacts, frows, fcols)
         return [gimages, gfilters]
 
     def infer_shape(self, node, shapes):
