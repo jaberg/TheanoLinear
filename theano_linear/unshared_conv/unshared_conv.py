@@ -64,7 +64,8 @@ class FilterActs(Base):
                 dtype=images.dtype,
                 broadcastable=hbcast)
         if images.dtype != filters.dtype:
-            raise TypeError('dtype mismatch', (images, filters))
+            raise TypeError('dtype mismatch', (images, images.dtype, filters,
+                filters.dtype))
         return theano.gof.Apply(self,
                 [images, filters],
                 [htype()])
@@ -277,7 +278,7 @@ class ImgActs(Base):
             raise TypeError('hidacts must be 5d tensor', filters)
         if filters.dtype != hidacts.dtype:
             raise TypeError('filters and hidacts must have matching dtype',
-                    (filters, hidacts))
+                    (filters, filters.dtype, hidacts, hidacts.dtype))
         return theano.gof.Apply(self,
                 [filters, hidacts, irows, icols],
                 [hidacts.type()])
