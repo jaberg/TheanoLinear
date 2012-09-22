@@ -4,7 +4,13 @@ XXX
 
 import numpy
 import theano
-import StringIO
+
+# Use grad_not_implemented for versions of theano that support it
+try:
+    grad_not_implemented = theano.gradient.grad_not_implemented
+except:
+    def grad_not_implemented(op, idx, ipt):
+        return None
 
 def any_symbolic(*args):
     """
@@ -222,7 +228,8 @@ class WeightActs(Base):
                 gfilters, hidacts, irows, icols)
         ghidacts = FilterActs(module_stride=self.module_stride)(
                 images, gfilters)
-        return [gimages, ghidacts, None, None]
+        return [gimages, ghidacts, grad_not_implemented(self, 2, inputs[2]),
+                grad_not_implemented(self, 3, inputs[3])]
 
     def infer_shape(self, node, shapes):
         images, hidacts, frows, fcols = node.inputs
@@ -349,6 +356,7 @@ class ImgActs(Base):
                 gimages, hidacts, frows, fcols)
         ghidacts = FilterActs(module_stride=self.module_stride)(
                 gimages, filters)
-        return [gfilters, ghidacts, None, None]
+        return [gfilters, ghidacts, grad_not_implemented(self, 2, inputs[2]),
+                grad_not_implemented(self, 3, inputs[3])]
 
 
