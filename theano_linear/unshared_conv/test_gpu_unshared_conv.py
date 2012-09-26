@@ -49,6 +49,9 @@ class TestGpuFilterActs(test_unshared_conv.TestFilterActs):
                 self.s_filters.get_value())
 
     def test_gpu_shape(self):
+        import theano.sandbox.cuda as cuda_ndarray
+        if cuda_ndarray.cuda_available == False:
+            raise SkipTest('Optional package cuda disabled')
         gpuout = self.gpu_op(self.s_images, self.s_filters)
         assert 'Cuda' in str(self.s_filters.type)
         f = theano.function([], gpuout, mode=mode_with_gpu)
