@@ -26,6 +26,10 @@ def any_from_gpu(*vv):
 # XXX: move to cuda.opt and refactor there
 def any_gpu_client(*vv):
     for v in vv:
+        try:
+            v.clients
+        except:
+            print 'V', v
         for (cl, pos) in v.clients:
             if cl.op == gpu_from_host:
                 return True
@@ -229,7 +233,7 @@ class GpuFilterActs(Base):
 def insert_gpu_filter_acts(node):
     if isinstance(node.op, FilterActs):
         images, filters = node.inputs
-        if any_from_gpu(images, filters) or any_gpu_client(node.outputs):
+        if any_from_gpu(images, filters) or any_gpu_client(*node.outputs):
             gpu_filter_acts = GpuFilterActs(
                     module_stride=node.op.module_stride,
                     partial_sum=1)
@@ -436,6 +440,23 @@ class GpuWeightActs(Base):
         """
 
         return sio.getvalue() % locals()
+
+
+@register_opt()
+@local_optimizer([])
+def insert_gpu_weight_acts(node):
+    if isinstance(node.op, WeightActs):
+        images, hidacts, frows, fcols = node.inputs
+        if any_from_gpu(images, hidacts) or any_gpu_client(*node.outputs):
+            gpu_weight_acts = GpuWeightActs(
+                    module_stride=node.op.module_stride,
+                    partial_sum=1)
+            return [host_from_gpu(gpu_weight_acts(
+                gpu_from_host(images),
+                gpu_from_host(hidacts),
+                frows,
+                fcols,
+                ))]
 
 
 class GpuImgActs(Base):

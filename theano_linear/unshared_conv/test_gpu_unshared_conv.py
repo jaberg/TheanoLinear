@@ -116,7 +116,7 @@ class TestGpuWeightActs(unittest.TestCase):
         assert outval.shape == self.fshape
 
 
-if 0:
+if 1:
   class TestMatchFilterActs(unittest.TestCase):
     def setUp(self):
         numpy.random.seed(77)
