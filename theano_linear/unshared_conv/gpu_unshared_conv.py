@@ -568,13 +568,12 @@ class GpuImgActs(Base):
             int icount            = hcount;
 
 
-            // XXX: use this parameter properly
+            // TODO: use this parameter properly
             int paddingStart = 0;
-            int imgStride = icount;
             float scaleTargets = 0.0;
             float scaleOutput = 1.0;
             int moduleStride = %(moduleStride)s;
-            int partialSum = 1; // set to 0 for convolution.
+            bool conv = 0;
 
             if (hgroups != fgroups)
             {
@@ -643,7 +642,7 @@ class GpuImgActs(Base):
                     moduleStride,
                     scaleTargets,
                     scaleOutput,
-                    partialSum))
+                    conv))
             {
                 %(fail)s;
             }

@@ -26,7 +26,7 @@ class TestLocalDot32x32(unittest.TestCase, SymbolicSelfTestMixin):
         np.random.seed(234)
         assert self.imshp[0] == self.imshp[1]
         fModulesR = (self.imshp[0] - self.ksize + 1) // self.subsample_stride
-        fModulesR += 1 # XXX ImgActs crashes w/o this??
+        #fModulesR += 1 # XXX GpuImgActs crashes w/o this??
         fModulesC = fModulesR
         self.fshape = (fModulesR, fModulesC, self.channels // self.ngroups,
                 self.ksize, self.ksize, self.ngroups, self.nkern_per_group)
