@@ -24,8 +24,9 @@ class TestLocalDot32x32(unittest.TestCase, SymbolicSelfTestMixin):
 
     def setUp(self):
         np.random.seed(234)
-
+        assert self.imshp[0] == self.imshp[1]
         fModulesR = (self.imshp[0] - self.ksize + 1) // self.subsample_stride
+        fModulesR += 1 # XXX ImgActs crashes w/o this??
         fModulesC = fModulesR
         self.fshape = (fModulesR, fModulesC, self.channels // self.ngroups,
                 self.ksize, self.ksize, self.ngroups, self.nkern_per_group)
@@ -49,19 +50,24 @@ class TestLocalDot32x32(unittest.TestCase, SymbolicSelfTestMixin):
 
 
 class TestLocalDotLargeGray(TestLocalDot32x32):
+
     channels = 1
-    bsize = 10
+    bsize = 128
     imshp = (256, 256)
     ksize = 9
     nkern_per_group = 16
     subsample_stride = 2
     ngroups = 1
-    n_patches = 50
+    n_patches = 3000
 
     def rand(self, shp):
         return np.random.rand(*shp).astype('float32')
 
     # not really a test, but important code to support
+    # Currently exposes error, by e.g.:
+    #  CUDA_LAUNCH_BLOCKING=1
+    #  THEANO_FLAGS=device=gpu,mode=DEBUG_MODE
+    #  nosetests -sd test_localdot.py:TestLocalDotLargeGray.run_autoencoder
     def run_autoencoder(
         self,
         n_train_iter=10000,   # -- make this small to be a good unit test
@@ -107,7 +113,7 @@ class TestLocalDotLargeGray(TestLocalDot32x32):
         print 'Patches shape', patches.shape, self.n_patches, patches5.shape
 
         # 2. Set up an autoencoder
-        print 'setting up autoencoder'
+        print 'Setting up autoencoder'
         hid = theano.tensor.tanh(self.A.rmul(self.xl))
         out = self.A.rmul_T(hid)
         cost = ((out - self.xl) ** 2).sum()
@@ -115,7 +121,10 @@ class TestLocalDotLargeGray(TestLocalDot32x32):
         gparams = theano.tensor.grad(cost, params)
         train_updates = [(p, p - lr / self.bsize * gp)
                          for (p, gp) in zip(params, gparams)]
-        train_fn = theano.function([], [cost], updates=train_updates)
+        if 1:
+            train_fn = theano.function([], [cost], updates=train_updates)
+        else:
+            train_fn = theano.function([], [], updates=train_updates)
 
         theano.printing.debugprint(train_fn)
 
@@ -124,9 +133,9 @@ class TestLocalDotLargeGray(TestLocalDot32x32):
         for ii in xrange(0, self.n_patches, self.bsize):
             self.xl.set_value(patches5[:, :, :, :, ii:ii + self.bsize], borrow=True)
             cost_ii, = train_fn()
-            #print 'status', ii, cost_ii
+            print 'Cost', ii, cost_ii
 
-        if show_filters:
+        if 0 and show_filters:
             self.A.imshow_gray()
             plt.show()
 
